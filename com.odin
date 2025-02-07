@@ -217,7 +217,7 @@ main :: proc() {
     menuBoxHeight: i32 = totalMenuHeight + menuPadding * 2;
     menuBoxWidth: i32 = menuWidth + menuPadding * 2;
 
-    // Item menu positioning (appears to the right of the main menu)
+    // Item menu
     itemSelectedIndex: i32 = 0;
     inItemMenu: bool = false;
     itemMenuX: i32 = menuX + menuBoxWidth + 6;
