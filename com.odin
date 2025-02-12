@@ -440,9 +440,4 @@ main :: proc() {
 
         EndDrawing();
     }
-}
-
-Game :: proc() {
-
-    
-}
+}            
