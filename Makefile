@@ -1,6 +1,6 @@
 .PHONY: build run clean
 
-build-com:
+build:
 	@odin build com.odin -file
 
 run: 
