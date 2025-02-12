@@ -1,10 +1,10 @@
 .PHONY: build run clean
 
 build:
-	@odin build com.odin -file
+	@odin build toa.odin -file
 
 run: 
 	@odin run .
 
 clean:
-	@rm -rf com
+	@rm -rf toa
