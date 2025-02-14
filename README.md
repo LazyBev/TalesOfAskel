@@ -6,3 +6,6 @@
 
 # How to run
 ``./toa``
+
+# Platforms
+linux only at the moment
