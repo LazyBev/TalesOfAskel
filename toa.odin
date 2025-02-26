@@ -56,33 +56,40 @@ Enemy :: struct {
     position: rl.Vector2,
     animation: ^Animation,
     health: int,
+    damage: ^int,
     max_health: int,
     dead: bool,
 }
 
 Player :: struct {
-    str: int,
-    def: int,
-    agi: int,
-    dex: int,
-    int: int,
+    health: int,
+    strength: int,
+    defense: int,
+    agility: int,
+    dexterity: int,
+    intelligence: int,
+    dead: bool,
 }
 
-init_player :: proc(st: int, df: int, ag: int, dx: int, it: int) -> Player {
+init_player :: proc(hp: int, str: int, def: int, agi: int, dex: int, intl: int, ded: bool) -> Player {
     return Player{
-        str = st,
-        def = df,
-        agi = ag,
-        dex = dx,
-        int = it,
+        health = hp,
+        strength = str,
+        defense = def,
+        agility = agi,
+        dexterity = dex,
+        intelligence = intl,
+        dead = ded,
     }
 }
 
 spawn_enemy :: proc(pos: rl.Vector2, anim: ^Animation) -> Enemy {
+    damage_value: int = 5
     return Enemy{
         position = pos,
         animation = anim,
         health = 100,
+        damage = &damage_value,
         max_health = 100,
         dead = false,
     };
@@ -128,10 +135,19 @@ update_enemy_animation :: proc(enemy: ^Enemy, anims: ^SpriteAnimations) {
 
     update_animation(enemy.animation);
 
+    if enemy.animation.state == .Attack {
+        if enemy.animation.current_frame == enemy.animation.num_frames - 1 {
+            enemy.animation = &anims.idle;
+            enemy.animation.state = .Idle;
+            enemy.animation.current_frame = 0;
+            enemy.animation.frame_timer = 0;
+        }
+    }
+
     // Handle Death Animation Completion
     if enemy.animation.state == .Death {
         if enemy.animation.current_frame == enemy.animation.num_frames - 1 {
-            enemy.animation.current_frame = enemy.animation.num_frames - 1; // Hold last frame
+            enemy.animation.current_frame = enemy.animation.num_frames - 1;
             enemy.dead = true;
         }
         return;
@@ -140,7 +156,7 @@ update_enemy_animation :: proc(enemy: ^Enemy, anims: ^SpriteAnimations) {
     // Handle Hurt Animation Completion
     if enemy.animation.state == .Hurt {
         if enemy.animation.current_frame == enemy.animation.num_frames - 1 {
-            enemy.animation = &anims.idle; // Return to idle
+            enemy.animation = &anims.idle;
             enemy.animation.state = .Idle;
             enemy.animation.current_frame = 0;
             enemy.animation.frame_timer = 0;
@@ -162,13 +178,31 @@ damage_enemy :: proc(enemy: ^Enemy, amount: int, anims: ^SpriteAnimations) {
         enemy.animation = &anims.hurt; // Switch to hurt animation
         enemy.animation.state = .Hurt;
     }
-    enemy.animation.current_frame = 0; // Reset animation
+    enemy.animation.current_frame = 0;
+    enemy.animation.frame_timer = 0;
+}
+
+damage_player :: proc(enemy: ^Enemy, player: ^Player, amount: ^int, anims: ^SpriteAnimations) {
+    if player.dead {
+        return;
+    }
+    
+    enemy.animation = &anims.attack;
+    enemy.animation.state = .Attack;
+
+    player.health -= amount^;
+    if player.health <= 0 {
+        fmt.println("You died");
+    } else {
+        fmt.printf("You have %v health\n", &player.health);
+    }
+    enemy.animation.current_frame = 0;
     enemy.animation.frame_timer = 0;
 }
 
 main :: proc() {
     using rl;
-    InitWindow(screenWidth, screenHeight, "Game");
+    InitWindow(screenWidth, screenHeight, "Tales Of Askel");
     SetTargetFPS(60);
     SetExitKey(.Q);
 
@@ -183,14 +217,15 @@ main :: proc() {
 
     // Stats menu options
     statsOptions: []Options = {
+        { name = "Hp"  },
         { name = "Str" }, 
         { name = "Def" },
         { name = "Agi" },
         { name = "Dex" },
         { name = "Int" },
     };
-    mchar := init_player(10, 5, 3, 5, 1);
-    player_stats: []int = {mchar.str, mchar.def, mchar.agi, mchar.dex, mchar.int};
+    mchar := init_player(100, 10, 5, 3, 5, 1, false);
+    player_stats: []int = {mchar.health, mchar.strength, mchar.defense, mchar.agility, mchar.dexterity, mchar.intelligence};
     
     // Available items in game
     itemsDict: []Options = {
@@ -302,122 +337,131 @@ main :: proc() {
 
     current_slime_anim: ^Animation = &slime_animations.idle;
     slime_pos := rl.Vector2{ f32(GetScreenWidth()) / 2, f32(GetScreenHeight()) / 2 };
-    slime_enemy := spawn_enemy(slime_pos, &slime_animations.idle);
+    slime_enemy := spawn_enemy(slime_pos, current_slime_anim);
+    current_plant_anim: ^Animation = &plant_animations.idle;
     plant_pos := rl.Vector2{ f32(GetScreenWidth()) / 2, f32(GetScreenHeight()) / 2 };
-    plant_enemy := spawn_enemy(plant_pos, &plant_animations.idle);
+    plant_enemy := spawn_enemy(plant_pos, current_plant_anim);
 
     controlsVisible := false;
-    attackCd := 3;
+    IsPlayerTurn := true;
 
     // Main game loop
     for !WindowShouldClose() {
         dt := GetFrameTime();
         // Handle input for main menu
-        if !inItemMenu && !inSettingsMenu && !inStatsMenu {
-            if IsKeyPressed(.W) {
-                menuSelectedIndex -= 1;
-                if menuSelectedIndex < 0 {
-                    menuSelectedIndex = i32(len(menuOptions)) - 1;
+        if IsPlayerTurn {
+            if !inItemMenu && !inSettingsMenu && !inStatsMenu {
+                if IsKeyPressed(.W) {
+                    menuSelectedIndex -= 1;
+                    if menuSelectedIndex < 0 {
+                        menuSelectedIndex = i32(len(menuOptions)) - 1;
+                    }
+                }
+
+                if IsKeyPressed(.S) {
+                    menuSelectedIndex += 1;
+                    if menuSelectedIndex >= i32(len(menuOptions)) {
+                        menuSelectedIndex = 0;
+                    }
+                }
+
+                if IsKeyPressed(.ENTER) || IsKeyPressed(.SPACE) || IsKeyPressed(.D) {
+                    if menuSelectedIndex == 0 {
+                        fmt.println("Selected:", menuOptions[menuSelectedIndex].name);
+                        damage_enemy(&slime_enemy, 10, &slime_animations);
+                    } else if menuSelectedIndex == 1 { // "Defend" selected
+                        fmt.println("Selected:", menuOptions[menuSelectedIndex].name);
+                    } else if menuSelectedIndex == 2 { // "Stats" selected
+                        fmt.println("Selected:", menuOptions[menuSelectedIndex].name);
+                        inStatsMenu = true;
+                    } else if menuSelectedIndex == 3 { // "Items" selected
+                        fmt.println("Selected:", menuOptions[menuSelectedIndex].name);
+                        inItemMenu = true;
+                    } else if menuSelectedIndex == 4 { // "Settings" selected
+                        fmt.println("Selected:", menuOptions[menuSelectedIndex].name);
+                        inSettingsMenu = true;
+                    }
+                    IsPlayerTurn = false;
+                }
+            } else if inStatsMenu && IsPlayerTurn {
+                // Inside item menu
+                if IsKeyPressed(.W) {
+                    statsSelectedIndex -= 1;
+                    if statsSelectedIndex < 0 {
+                        statsSelectedIndex = i32(len(statsOptions)) - 1;
+                    }
+                }
+
+                if IsKeyPressed(.S) {
+                    statsSelectedIndex += 1;
+                    if statsSelectedIndex >= i32(len(statsOptions)) {
+                        statsSelectedIndex = 0;
+                    }
+                }
+
+                if IsKeyPressed(.A) || IsKeyPressed(.ESCAPE) {
+                    inStatsMenu = false; // Exit item menu
+                }
+
+                if IsKeyPressed(.ENTER) || IsKeyPressed(.SPACE) || IsKeyPressed(.D) {
+                }
+            } else if inItemMenu && IsPlayerTurn {
+                // Inside item menu
+                if IsKeyPressed(.W) {
+                    itemSelectedIndex -= 1;
+                    if itemSelectedIndex < 0 {
+                        itemSelectedIndex = i32(len(itemOptions)) - 1;
+                    }
+                }
+
+                if IsKeyPressed(.S) {
+                    itemSelectedIndex += 1;
+                    if itemSelectedIndex >= i32(len(itemOptions)) {
+                        itemSelectedIndex = 0;
+                    }
+                }
+
+                if IsKeyPressed(.A) || IsKeyPressed(.ESCAPE) {
+                    inItemMenu = false; // Exit item menu
+                }
+
+                if IsKeyPressed(.ENTER) || IsKeyPressed(.SPACE) || IsKeyPressed(.D) {
+                    fmt.println("Used item:", itemOptions[itemSelectedIndex].name);
+                    IsPlayerTurn = false;
+                }
+            } else if inSettingsMenu && IsPlayerTurn {
+                // Inside settings menu
+                if IsKeyPressed(.W) {
+                    settingsSelectedIndex -= 1;
+                    if settingsSelectedIndex < 0 {
+                        settingsSelectedIndex = i32(len(settingsOptions)) - 1;
+                    }
+                }
+
+                if IsKeyPressed(.S) {
+                    settingsSelectedIndex += 1;
+                    if settingsSelectedIndex >= i32(len(settingsOptions)) {
+                        settingsSelectedIndex = 0;
+                    }
+                }
+
+                if IsKeyPressed(.A) || IsKeyPressed(.ESCAPE) {
+                    inSettingsMenu = false; // Exit settings menu
+                }
+
+                if IsKeyPressed(.ENTER) || IsKeyPressed(.SPACE) || IsKeyPressed(.D) {
+                    fmt.println("Used setting:", settingsOptions[settingsSelectedIndex].name);
+                    if settingsOptions[settingsSelectedIndex].name == "Quit" {
+                        CloseWindow();
+                    }
                 }
             }
-
-            if IsKeyPressed(.S) {
-                menuSelectedIndex += 1;
-                if menuSelectedIndex >= i32(len(menuOptions)) {
-                    menuSelectedIndex = 0;
-                }
+        } else {
+            if !slime_enemy.dead {
+                fmt.println("Slime attacks back!");
+                damage_player(&slime_enemy, &mchar, &slime_enemy.damage^, &slime_animations);
             }
-
-            if IsKeyPressed(.ENTER) || IsKeyPressed(.SPACE) || IsKeyPressed(.D) {
-                if menuSelectedIndex == 1 { // "Defend" selected
-                    fmt.println("Selected:", menuOptions[menuSelectedIndex].name);
-                } else if menuSelectedIndex == 2 { // "Stats" selected
-                    fmt.println("Selected:", menuOptions[menuSelectedIndex].name);
-                    inStatsMenu = true;
-                } else if menuSelectedIndex == 3 { // "Items" selected
-                    fmt.println("Selected:", menuOptions[menuSelectedIndex].name);
-                    inItemMenu = true;
-                } else if menuSelectedIndex == 4 { // "Settings" selected
-                    fmt.println("Selected:", menuOptions[menuSelectedIndex].name);
-                    inSettingsMenu = true;
-                } else if menuSelectedIndex == 0 && attackCd == 3{
-                    fmt.println("Selected:", menuOptions[menuSelectedIndex].name);
-                    damage_enemy(&slime_enemy, 10, &slime_animations);
-                    attackCd = 0;
-                }
-                attackCd += 1;
-            }
-        } else if inStatsMenu {
-            // Inside item menu
-            if IsKeyPressed(.W) {
-                statsSelectedIndex -= 1;
-                if statsSelectedIndex < 0 {
-                    statsSelectedIndex = i32(len(statsOptions)) - 1;
-                }
-            }
-
-            if IsKeyPressed(.S) {
-                statsSelectedIndex += 1;
-                if statsSelectedIndex >= i32(len(statsOptions)) {
-                    statsSelectedIndex = 0;
-                }
-            }
-
-            if IsKeyPressed(.A) || IsKeyPressed(.ESCAPE) {
-                inStatsMenu = false; // Exit item menu
-            }
-
-            if IsKeyPressed(.ENTER) || IsKeyPressed(.SPACE) || IsKeyPressed(.D) {
-            }
-        } else if inItemMenu {
-            // Inside item menu
-            if IsKeyPressed(.W) {
-                itemSelectedIndex -= 1;
-                if itemSelectedIndex < 0 {
-                    itemSelectedIndex = i32(len(itemOptions)) - 1;
-                }
-            }
-
-            if IsKeyPressed(.S) {
-                itemSelectedIndex += 1;
-                if itemSelectedIndex >= i32(len(itemOptions)) {
-                    itemSelectedIndex = 0;
-                }
-            }
-
-            if IsKeyPressed(.A) || IsKeyPressed(.ESCAPE) {
-                inItemMenu = false; // Exit item menu
-            }
-
-            if IsKeyPressed(.ENTER) || IsKeyPressed(.SPACE) || IsKeyPressed(.D) {
-                fmt.println("Used item:", itemOptions[itemSelectedIndex].name);
-            }
-        } else if inSettingsMenu {
-            // Inside settings menu
-            if IsKeyPressed(.W) {
-                settingsSelectedIndex -= 1;
-                if settingsSelectedIndex < 0 {
-                    settingsSelectedIndex = i32(len(settingsOptions)) - 1;
-                }
-            }
-
-            if IsKeyPressed(.S) {
-                settingsSelectedIndex += 1;
-                if settingsSelectedIndex >= i32(len(settingsOptions)) {
-                    settingsSelectedIndex = 0;
-                }
-            }
-
-            if IsKeyPressed(.A) || IsKeyPressed(.ESCAPE) {
-                inSettingsMenu = false; // Exit settings menu
-            }
-
-            if IsKeyPressed(.ENTER) || IsKeyPressed(.SPACE) || IsKeyPressed(.D) {
-                fmt.println("Used setting:", settingsOptions[settingsSelectedIndex].name);
-                if settingsOptions[settingsSelectedIndex].name == "Quit" {
-                    CloseWindow();
-                }
-            }
+            IsPlayerTurn = true; // Give turn back to player
         }
 
         update_enemy_animation(&slime_enemy, &slime_animations);
@@ -483,7 +527,7 @@ main :: proc() {
                 statsY := statsMenuY + (statsMenuHeight + spacing) * i;
                 statsNum := fmt.ctprintf("%v", player_stats[i]);
                 statsWrdNum := fmt.ctprintf("%v : %v", stats.name, statsNum); 
-                DrawText(statsWrdNum, statsMenuX + 5, statsY + 5, 20, BLACK);
+                DrawText(statsWrdNum, statsMenuX + 5, statsY + 6, 20, BLACK);
                 i += 1;
             }
         }
@@ -532,7 +576,7 @@ main :: proc() {
             }
         }
  
-        if !(slime_enemy.dead && slime_enemy.animation.state == .Death && slime_enemy.animation.current_frame == slime_enemy.animation.num_frames - 1) {
+        if !(slime_enemy.dead && slime_enemy.animation.state == .Death && slime_enemy.animation.current_frame == slime_enemy.animation.num_frames - 1) {             
             draw_animation(slime_enemy.animation^, slime_enemy.position, false);
         }
 
