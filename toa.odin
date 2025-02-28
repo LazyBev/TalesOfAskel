@@ -17,6 +17,15 @@ Animation_State :: enum {
     Death,
 }
 
+// Added to track the overall combat flow
+Combat_State :: enum {
+    PlayerTurn,         // Player is selecting an action
+    PlayerActionExecuting,  // Player's action is being animated
+    EnemyTurn,          // Enemy is deciding what to do
+    EnemyActionExecuting,   // Enemy's action is being animated
+    BattleOver          // Combat has ended (player or enemy dead)
+}
+
 Animation :: struct {
     texture: rl.Texture2D,
     num_frames: int,
@@ -59,6 +68,7 @@ Enemy :: struct {
     damage: ^int,
     max_health: int,
     dead: bool,
+    name: cstring,
 }
 
 Player :: struct {
@@ -83,7 +93,7 @@ init_player :: proc(hp: int, str: int, def: int, agi: int, dex: int, intl: int, 
     }
 }
 
-spawn_enemy :: proc(pos: rl.Vector2, anim: ^Animation) -> Enemy {
+spawn_enemy :: proc(pos: rl.Vector2, anim: ^Animation, enemy_name: cstring) -> Enemy {
     damage_value: int = 5
     return Enemy{
         position = pos,
@@ -92,6 +102,7 @@ spawn_enemy :: proc(pos: rl.Vector2, anim: ^Animation) -> Enemy {
         damage = &damage_value,
         max_health = 100,
         dead = false,
+        name = enemy_name,
     };
 }
 
@@ -128,19 +139,24 @@ load_animation :: proc(tex: rl.Texture2D, frames: int, frame_time: f32, state: A
     };
 }
 
-update_enemy_animation :: proc(enemy: ^Enemy, anims: ^SpriteAnimations) {
+// Modified to remove playerturn parameter
+update_enemy_animation :: proc(enemy: ^Enemy, anims: ^SpriteAnimations) -> bool {
+    animation_completed := false;
+    
     if enemy.dead {
-        return;
+        return false;
     }
 
     update_animation(enemy.animation);
 
+    // Check if attack animation completed
     if enemy.animation.state == .Attack {
         if enemy.animation.current_frame == enemy.animation.num_frames - 1 {
             enemy.animation = &anims.idle;
             enemy.animation.state = .Idle;
             enemy.animation.current_frame = 0;
             enemy.animation.frame_timer = 0;
+            animation_completed = true;
         }
     }
 
@@ -149,8 +165,9 @@ update_enemy_animation :: proc(enemy: ^Enemy, anims: ^SpriteAnimations) {
         if enemy.animation.current_frame == enemy.animation.num_frames - 1 {
             enemy.animation.current_frame = enemy.animation.num_frames - 1;
             enemy.dead = true;
+            animation_completed = true;
         }
-        return;
+        return animation_completed;
     }
 
     // Handle Hurt Animation Completion
@@ -160,8 +177,11 @@ update_enemy_animation :: proc(enemy: ^Enemy, anims: ^SpriteAnimations) {
             enemy.animation.state = .Idle;
             enemy.animation.current_frame = 0;
             enemy.animation.frame_timer = 0;
+            animation_completed = true;
         }
     }
+    
+    return animation_completed;
 }
 
 damage_enemy :: proc(enemy: ^Enemy, amount: int, anims: ^SpriteAnimations) {
@@ -174,9 +194,11 @@ damage_enemy :: proc(enemy: ^Enemy, amount: int, anims: ^SpriteAnimations) {
         enemy.health = 0;
         enemy.animation = &anims.death; // Switch to death animation
         enemy.animation.state = .Death;
+        fmt.printf("%s was defeated!\n", enemy.name);
     } else {
         enemy.animation = &anims.hurt; // Switch to hurt animation
         enemy.animation.state = .Hurt;
+        fmt.printf("%s took %d damage! %d HP remaining.\n", enemy.name, amount, enemy.health);
     }
     enemy.animation.current_frame = 0;
     enemy.animation.frame_timer = 0;
@@ -189,15 +211,17 @@ damage_player :: proc(enemy: ^Enemy, player: ^Player, amount: ^int, anims: ^Spri
     
     enemy.animation = &anims.attack;
     enemy.animation.state = .Attack;
+    enemy.animation.current_frame = 0;
+    enemy.animation.frame_timer = 0;
 
     player.health -= amount^;
     if player.health <= 0 {
-        fmt.println("You died");
+        player.health = 0;
+        player.dead = true;
+        fmt.println("You died!");
     } else {
-        fmt.printf("You have %v health\n", &player.health);
+        fmt.printf("%s attacks! You take %d damage! %d health remaining\n", enemy.name, amount^, player.health);
     }
-    enemy.animation.current_frame = 0;
-    enemy.animation.frame_timer = 0;
 }
 
 main :: proc() {
@@ -235,7 +259,8 @@ main :: proc() {
     };
 
     // Item menu options
-    itemOptions: []Options = {};
+    itemOptions := make([]Options, 0, 10);  // Create with capacity for 10 items
+    add_item("Cloudy Vial", &itemOptions);
 
     // Settings menu options
     settingsOptions: []Options = {
@@ -337,19 +362,40 @@ main :: proc() {
 
     current_slime_anim: ^Animation = &slime_animations.idle;
     slime_pos := rl.Vector2{ f32(GetScreenWidth()) / 2, f32(GetScreenHeight()) / 2 };
-    slime_enemy := spawn_enemy(slime_pos, current_slime_anim);
+    slime_enemy := spawn_enemy(slime_pos, current_slime_anim, "Slime");
+    
     current_plant_anim: ^Animation = &plant_animations.idle;
-    plant_pos := rl.Vector2{ f32(GetScreenWidth()) / 2, f32(GetScreenHeight()) / 2 };
-    plant_enemy := spawn_enemy(plant_pos, current_plant_anim);
+    plant_pos := rl.Vector2{ f32(GetScreenWidth()) / 2 + 100, f32(GetScreenHeight()) / 2 };
+    plant_enemy := spawn_enemy(plant_pos, current_plant_anim, "Plant");
 
     controlsVisible := false;
-    IsPlayerTurn := true;
+    
+    // Initialize combat state to player's turn
+    combat_state := Combat_State.PlayerTurn;
+    
+    // Create an active enemy reference for easier targeting
+    active_enemy := &slime_enemy;
+    
+    // Status message for UI feedback
+    status_message: cstring = "Your turn! Choose an action.";
+    
+    // Combat timer for pacing animations and actions
+    combat_timer: f32 = 0;
+    enemy_turn_delay: f32 = 1.0; // Seconds to wait before enemy attacks
 
     // Main game loop
     for !WindowShouldClose() {
         dt := GetFrameTime();
-        // Handle input for main menu
-        if IsPlayerTurn {
+        combat_timer += dt;
+        
+        // Update animations for both enemies
+        slime_animation_completed := update_enemy_animation(&slime_enemy, &slime_animations);
+        plant_animation_completed := update_enemy_animation(&plant_enemy, &plant_animations);
+        
+        // Combat state machine
+        switch combat_state {
+        case .PlayerTurn:
+            // Allow menu navigation during player's turn
             if !inItemMenu && !inSettingsMenu && !inStatsMenu {
                 if IsKeyPressed(.W) {
                     menuSelectedIndex -= 1;
@@ -366,25 +412,30 @@ main :: proc() {
                 }
 
                 if IsKeyPressed(.ENTER) || IsKeyPressed(.SPACE) || IsKeyPressed(.D) {
-                    if menuSelectedIndex == 0 {
+                    if menuSelectedIndex == 0 { // Attack
                         fmt.println("Selected:", menuOptions[menuSelectedIndex].name);
-                        damage_enemy(&slime_enemy, 10, &slime_animations);
-                    } else if menuSelectedIndex == 1 { // "Defend" selected
+                        damage_enemy(active_enemy, mchar.strength, &slime_animations);
+                        status_message = "You attack!";
+                        combat_state = .PlayerActionExecuting;
+                    } else if menuSelectedIndex == 1 { // Defend
                         fmt.println("Selected:", menuOptions[menuSelectedIndex].name);
-                    } else if menuSelectedIndex == 2 { // "Stats" selected
+                        status_message = "You take a defensive stance!";
+                        // Add defense logic here
+                        combat_state = .EnemyTurn;
+                        combat_timer = 0; // Reset timer for enemy turn delay
+                    } else if menuSelectedIndex == 2 { // Stats
                         fmt.println("Selected:", menuOptions[menuSelectedIndex].name);
                         inStatsMenu = true;
-                    } else if menuSelectedIndex == 3 { // "Items" selected
+                    } else if menuSelectedIndex == 3 { // Items
                         fmt.println("Selected:", menuOptions[menuSelectedIndex].name);
                         inItemMenu = true;
-                    } else if menuSelectedIndex == 4 { // "Settings" selected
+                    } else if menuSelectedIndex == 4 { // Settings
                         fmt.println("Selected:", menuOptions[menuSelectedIndex].name);
                         inSettingsMenu = true;
                     }
-                    IsPlayerTurn = false;
                 }
-            } else if inStatsMenu && IsPlayerTurn {
-                // Inside item menu
+            } else if inStatsMenu {
+                // Stats menu controls
                 if IsKeyPressed(.W) {
                     statsSelectedIndex -= 1;
                     if statsSelectedIndex < 0 {
@@ -400,13 +451,10 @@ main :: proc() {
                 }
 
                 if IsKeyPressed(.A) || IsKeyPressed(.ESCAPE) {
-                    inStatsMenu = false; // Exit item menu
+                    inStatsMenu = false;
                 }
-
-                if IsKeyPressed(.ENTER) || IsKeyPressed(.SPACE) || IsKeyPressed(.D) {
-                }
-            } else if inItemMenu && IsPlayerTurn {
-                // Inside item menu
+            } else if inItemMenu {
+                // Item menu controls
                 if IsKeyPressed(.W) {
                     itemSelectedIndex -= 1;
                     if itemSelectedIndex < 0 {
@@ -422,15 +470,18 @@ main :: proc() {
                 }
 
                 if IsKeyPressed(.A) || IsKeyPressed(.ESCAPE) {
-                    inItemMenu = false; // Exit item menu
+                    inItemMenu = false;
                 }
 
-                if IsKeyPressed(.ENTER) || IsKeyPressed(.SPACE) || IsKeyPressed(.D) {
+                if IsKeyPressed(.ENTER) || IsKeyPressed(.SPACE) || IsKeyPressed(.D) && len(itemOptions) > 0 {
                     fmt.println("Used item:", itemOptions[itemSelectedIndex].name);
-                    IsPlayerTurn = false;
+                    // Add item use logic here
+                    inItemMenu = false;
+                    combat_state = .EnemyTurn;
+                    combat_timer = 0;
                 }
-            } else if inSettingsMenu && IsPlayerTurn {
-                // Inside settings menu
+            } else if inSettingsMenu {
+                // Settings menu controls
                 if IsKeyPressed(.W) {
                     settingsSelectedIndex -= 1;
                     if settingsSelectedIndex < 0 {
@@ -446,7 +497,7 @@ main :: proc() {
                 }
 
                 if IsKeyPressed(.A) || IsKeyPressed(.ESCAPE) {
-                    inSettingsMenu = false; // Exit settings menu
+                    inSettingsMenu = false;
                 }
 
                 if IsKeyPressed(.ENTER) || IsKeyPressed(.SPACE) || IsKeyPressed(.D) {
@@ -456,15 +507,72 @@ main :: proc() {
                     }
                 }
             }
-        } else {
-            if !slime_enemy.dead {
-                fmt.println("Slime attacks back!");
-                damage_player(&slime_enemy, &mchar, &slime_enemy.damage^, &slime_animations);
+            
+        case .PlayerActionExecuting:
+            // Wait for player's attack animation to complete
+            if active_enemy.animation.state == .Hurt || active_enemy.animation.state == .Death {
+                if slime_animation_completed {
+                    if active_enemy.dead {
+                        status_message = "Enemy defeated!";
+                        combat_state = .BattleOver;
+                    } else {
+                        status_message = "Enemy's turn...";
+                        combat_state = .EnemyTurn;
+                        combat_timer = 0; // Reset timer for enemy delay
+                    }
+                }
             }
-            IsPlayerTurn = true; // Give turn back to player
+            
+        case .EnemyTurn:
+            // Short delay before enemy attacks
+            if combat_timer >= enemy_turn_delay {
+                if !active_enemy.dead {
+                    status_message = "Enemy is attacking!";
+                    damage_player(active_enemy, &mchar, active_enemy.damage, &slime_animations);
+                    combat_state = .EnemyActionExecuting;
+                } else {
+                    // If active enemy is dead, check if there are other enemies
+                    status_message = "Your turn! Choose an action.";
+                    combat_state = .PlayerTurn;
+                }
+            }
+            
+        case .EnemyActionExecuting:
+            // Wait for enemy's attack animation to complete
+            if active_enemy.animation.state == .Attack {
+                if slime_animation_completed {
+                    if mchar.dead {
+                        status_message = "You have been defeated!";
+                        combat_state = .BattleOver;
+                    } else {
+                        status_message = "Your turn! Choose an action.";
+                        combat_state = .PlayerTurn;
+                    }
+                }
+            }
+            
+        case .BattleOver:
+            // Battle is over, player can view results
+            if IsKeyPressed(.SPACE) || IsKeyPressed(.ENTER) {
+                // If player wants to start a new battle, reset state
+                if mchar.dead {
+                    // Reset player
+                    mchar = init_player(100, 10, 5, 3, 5, 1, false);
+                    player_stats[0] = mchar.health;
+                }
+                
+                // Reset active enemy if needed
+                if active_enemy.dead {
+                    active_enemy.dead = false;
+                    active_enemy.health = active_enemy.max_health;
+                    active_enemy.animation = &slime_animations.idle;
+                    active_enemy.animation.state = .Idle;
+                }
+                
+                status_message = "Your turn! Choose an action.";
+                combat_state = .PlayerTurn;
+            }
         }
-
-        update_enemy_animation(&slime_enemy, &slime_animations);
 
         // Draw
         BeginDrawing();
@@ -481,8 +589,15 @@ main :: proc() {
                 WHITE             
             );
         }
+        
+        // Display combat status
+        DrawRectangle(screenWidth/2 - 200, 20, 400, 40, ColorAlpha(GRAY, 0.65));
+        DrawRectangleLines(screenWidth/2 - 200, 20, 400, 40, BLACK);
+        DrawText(status_message, screenWidth/2 - 190, 30, 20, BLACK);
+        
+        // Display control help
         if IsKeyPressed(.H) {
-            controlsVisible = !controlsVisible; // Toggle the visibility
+            controlsVisible = !controlsVisible;
         }
 
         if controlsVisible {
@@ -494,6 +609,22 @@ main :: proc() {
             DrawText("Press Q to quit", 10, 70, 17, BLACK);
         } else {
             DrawText("Press H to show controls", 10, 10, 17, BLACK);
+        }
+
+        // Draw player health bar
+        DrawRectangle(20, 100, 200, 20, RED);
+        DrawRectangle(20, 100, (200 * mchar.health) / 100, 20, GREEN);
+        DrawRectangleLines(20, 100, 200, 20, BLACK);
+        health_text := fmt.ctprintf("HP: %d/%d", mchar.health, 100);
+        DrawText(health_text, 25, 103, 15, BLACK);
+
+        // Draw enemy health bar
+        if !active_enemy.dead {
+            DrawRectangle(screenWidth - 220, 100, 200, 20, RED);
+            DrawRectangle(screenWidth - 220, 100, (200 * active_enemy.health) / active_enemy.max_health, 20, GREEN);
+            DrawRectangleLines(screenWidth - 220, 100, 200, 20, BLACK);
+            enemy_health_text := fmt.ctprintf("%s: %d/%d", active_enemy.name, active_enemy.health, active_enemy.max_health);
+            DrawText(enemy_health_text, screenWidth - 215, 103, 15, BLACK);
         }
 
         // Draw main menu
@@ -538,19 +669,23 @@ main :: proc() {
             DrawRectangleLines(itemMenuX - menuPadding, itemMenuY - menuPadding, itemMenuBoxWidth, itemMenuBoxHeight, BLACK);
 
             // Display item menu options
-            i = 0;
-            for item in itemOptions {
-                itemY := itemMenuY + (itemMenuHeight + spacing) * i;
+            if len(itemOptions) > 0 {
+                i = 0;
+                for item in itemOptions {
+                    itemY := itemMenuY + (itemMenuHeight + spacing) * i;
 
-                if i == itemSelectedIndex {
-                    DrawRectangle(itemMenuX - 5, itemY - 3, itemMenuWidth, itemMenuHeight, BLUE);
-                    DrawRectangleLines(itemMenuX - 5, itemY - 3, itemMenuWidth, itemMenuHeight, BLACK);
-                    DrawText(item.name, itemMenuX + 5, itemY + 5, 20, RAYWHITE);
-                } else {
-                    DrawText(item.name, itemMenuX + 5, itemY + 5, 20, BLACK);
+                    if i == itemSelectedIndex {
+                        DrawRectangle(itemMenuX - 5, itemY - 3, itemMenuWidth, itemMenuHeight, BLUE);
+                        DrawRectangleLines(itemMenuX - 5, itemY - 3, itemMenuWidth, itemMenuHeight, BLACK);
+                        DrawText(item.name, itemMenuX + 5, itemY + 5, 20, RAYWHITE);
+                    } else {
+                        DrawText(item.name, itemMenuX + 5, itemY + 5, 20, BLACK);
+                    }
+
+                    i += 1;
                 }
-
-                i += 1;
+            } else {
+                DrawText("No items available", itemMenuX + 5, itemMenuY + 5, 20, BLACK);
             }
         }
 
@@ -576,10 +711,236 @@ main :: proc() {
             }
         }
  
-        if !(slime_enemy.dead && slime_enemy.animation.state == .Death && slime_enemy.animation.current_frame == slime_enemy.animation.num_frames - 1) {             
+        // Draw the slime enemy if it's not dead or if the death animation isn't complete
+        if !(slime_enemy.dead && slime_enemy.animation.state == .Death && 
+             slime_enemy.animation.current_frame == slime_enemy.animation.num_frames - 1) {
             draw_animation(slime_enemy.animation^, slime_enemy.position, false);
         }
 
+        // Draw battle over message
+        if combat_state == .BattleOver {
+            DrawRectangle(screenWidth/2 - 200, screenHeight/2 - 50, 400, 100, ColorAlpha(DARKBLUE, 0.8));
+            DrawRectangleLines(screenWidth/2 - 200, screenHeight/2 - 50, 400, 100, BLACK);
+            
+            if mchar.dead {
+                DrawText("You have been defeated!", screenWidth/2 - 150, screenHeight/2 - 30, 20, WHITE);
+            } else {
+                DrawText("Victory!", screenWidth/2 - 40, screenHeight/2 - 30, 20, WHITE);
+            }
+            
+            DrawText("Press ENTER to continue", screenWidth/2 - 140, screenHeight/2 + 10, 20, WHITE);
+        }
+
+        // Draw plant enemy if it's not dead or if the death animation isn't complete
+        if !(plant_enemy.dead && plant_enemy.animation.state == .Death && 
+             plant_enemy.animation.current_frame == plant_enemy.animation.num_frames - 1) {
+            draw_animation(plant_enemy.animation^, plant_enemy.position, false);
+        }
+
+        // Target selection indicator when attacking
+        if combat_state == .PlayerTurn && menuSelectedIndex == 0 && !inStatsMenu && !inItemMenu && !inSettingsMenu {
+            // Draw a target indicator over the active enemy
+            if !active_enemy.dead {
+                DrawRectangleLines(
+                    i32(active_enemy.position.x - 50), 
+                    i32(active_enemy.position.y - 50), 
+                    100, 100, 
+                    RED
+                );
+                
+                // Add targeting controls
+                DrawText("Press TAB to switch targets", screenWidth - 250, 150, 18, BLACK);
+                
+                // Handle target switching
+                if IsKeyPressed(.TAB) {
+                    if active_enemy == &slime_enemy && !plant_enemy.dead {
+                        active_enemy = &plant_enemy;
+                    } else if active_enemy == &plant_enemy && !slime_enemy.dead {
+                        active_enemy = &slime_enemy;
+                    }
+                }
+            }
+        }
+        
+        if combat_state == .EnemyActionExecuting {
+            // Draw attack effect from enemy to player
+            DrawLine(
+                i32(active_enemy.position.x - 40), 
+                i32(active_enemy.position.y), 
+                160, 
+                screenHeight / 2, 
+                ORANGE
+            );
+            
+            // Draw attack particles
+            for i := 0; i < 5; i += 1 {
+                DrawCircle(
+                    160 + GetRandomValue(-20, 20), 
+                    screenHeight / 2 + GetRandomValue(-20, 20), 
+                    f32(GetRandomValue(2, 5)), 
+                    ORANGE
+                );
+            }
+        }
+        
+        // Draw item and ability cooldowns
+        if combat_state == .PlayerTurn {
+            // Add cooldown indicators for abilities (if implemented)
+            cooldown_x := 20;
+            cooldown_y := 130;
+            
+            DrawText("Abilities:", cooldown_x, cooldown_y, 18, BLACK);
+            
+            // Sample ability cooldowns (can be integrated with actual ability system)
+            ability_names := []cstring{"Attack", "Fireball", "Heal"};
+            ability_cooldowns := []i32{0, 2, 1}; // Turns remaining
+            
+            for i := 0; i < len(ability_names); i += 1 {
+                y_pos := cooldown_y + 25 + (i * 25);
+                DrawText(ability_names[i], cooldown_x, y_pos, 16, BLACK);
+                
+                if ability_cooldowns[i] > 0 {
+                    cooldown_text := fmt.ctprintf("(%d)", ability_cooldowns[i]);
+                    DrawText(cooldown_text, cooldown_x + 100, y_pos, 16, RED);
+                } else {
+                    DrawText("(Ready)", cooldown_x + 100, y_pos, 16, GREEN);
+                }
+            }
+        }
+        
+        // Draw battle log
+        DrawRectangle(screenWidth - 250, screenHeight - 150, 230, 130, ColorAlpha(GRAY, 0.65));
+        DrawRectangleLines(screenWidth - 250, screenHeight - 150, 230, 130, BLACK);
+        DrawText("Battle Log:", screenWidth - 240, screenHeight - 140, 18, BLACK);
+        
+        // Sample battle log entries (can be integrated with actual logging system)
+        log_entries := []cstring{
+            "You attacked the enemy!",
+            "Enemy took 10 damage",
+            "Enemy attacked you",
+            "You took 5 damage"
+        };
+        
+        for i := 0; i < len(log_entries); i += 1 {
+            y_pos := screenHeight - 115 + (i * 20);
+            DrawText(log_entries[i], screenWidth - 240, y_pos, 14, BLACK);
+        }
+        
+        // Add experience and level information
+        DrawRectangle(20, screenHeight - 80, 200, 60, ColorAlpha(DARKGRAY, 0.65));
+        DrawRectangleLines(20, screenHeight - 80, 200, 60, BLACK);
+        
+        player_level := 5; // Sample level
+        player_exp := 75; // Current XP
+        exp_needed := 100; // XP needed for next level
+        
+        level_text := fmt.ctprintf("Level: %d", player_level);
+        DrawText(level_text, 30, screenHeight - 70, 18, BLACK);
+        
+        // Draw XP bar
+        DrawRectangle(30, screenHeight - 40, 180, 10, GRAY);
+        DrawRectangle(30, screenHeight - 40, (180 * player_exp) / exp_needed, 10, PURPLE);
+        DrawRectangleLines(30, screenHeight - 40, 180, 10, BLACK);
+        
+        exp_text := fmt.ctprintf("XP: %d/%d", player_exp, exp_needed);
+        DrawText(exp_text, 30, screenHeight - 25, 16, BLACK);
+        
+        // Draw minimap or dungeon progress
+        DrawRectangle(screenWidth - 110, 20, 90, 60, ColorAlpha(DARKGRAY, 0.65));
+        DrawRectangleLines(screenWidth - 110, 20, 90, 60, BLACK);
+        DrawText("Floor 1", screenWidth - 100, 25, 16, BLACK);
+        
+        // Simple minimap representation
+        DrawRectangle(screenWidth - 100, 45, 70, 30, BLACK);
+        DrawRectangle(screenWidth - 95, 50, 60, 20, DARKBROWN);
+        DrawCircle(screenWidth - 65, 60, 3, RED); // Player position
+        
         EndDrawing();
     }
-}            
+
+    CloseWindow();
+}
+
+// New function to handle item usage
+use_item :: proc(item_name: cstring, target: ^Enemy, player: ^Player, slime_anims: ^SpriteAnimations, plant_anims: ^SpriteAnimations) -> bool {
+    if item_name == "Cloudy Vial" {
+        // Healing potion
+        if player.health < 100 {
+            healing_amount := 30;
+            player.health += healing_amount;
+            if player.health > 100 {
+                player.health = 100;
+            }
+            fmt.printf("Used %s! Healed for %d points. Health now: %d\n", 
+                      item_name, healing_amount, player.health);
+            return true;
+        } else {
+            fmt.println("Health is already full!");
+            return false;
+        }
+    } else if item_name == "Vigor Vial" {
+        // Strength boost
+        strength_boost := 5;
+        player.strength += strength_boost;
+        fmt.printf("Used %s! Strength increased by %d points. Strength now: %d\n", 
+                  item_name, strength_boost, player.strength);
+        return true;
+    } else if item_name == "Bomb" {
+        // Damage item
+        damage_amount := 25;
+        
+        if target == &slime_enemy {
+            damage_enemy(target, damage_amount, slime_anims);
+        } else {
+            damage_enemy(target, damage_amount, plant_anims);
+        }
+        
+        fmt.printf("Used %s! Dealt %d damage to %s\n", 
+                  item_name, damage_amount, target.name);
+        return true;
+    } else {
+        fmt.printf("Unknown item: %s\n", item_name);
+        return false;
+    }
+}
+
+// New function to add items to the player's inventory
+add_item :: proc(item_name: cstring, item_options: ^[]Options) {
+    new_item := Options{name = item_name};
+    item_options^ = append(item_options^, new_item);
+}
+
+// New function to remove an item from the inventory after use
+remove_item :: proc(index: int, item_options: ^[]Options) {
+    if index >= 0 && index < len(item_options) {
+        // Remove item at the specified index
+        item_options^ = ordered_remove(item_options^, index);
+    }
+}
+
+// New function to update the player's stats display
+update_player_stats :: proc(player: Player, stats: ^[]int) {
+    stats[0] = player.health;
+    stats[1] = player.strength;
+    stats[2] = player.defense;
+    stats[3] = player.agility;
+    stats[4] = player.dexterity;
+    stats[5] = player.intelligence;
+}
+
+// New function to check if all enemies are defeated
+all_enemies_defeated :: proc(enemies: ..^Enemy) -> bool {
+    for enemy in enemies {
+        if !enemy.dead {
+            return false;
+        }
+    }
+    return true;
+}
+
+// New function to save game state
+save_game :: proc(player: Player, slime_enemy: Enemy, plant_enemy: Enemy) -> bool {
+    // Placeholder for save game functionality
+    fmt.println("Game saved successfully!");
+    return true;
+}
