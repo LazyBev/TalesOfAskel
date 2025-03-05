@@ -1,7 +1,7 @@
-package combat;
+package combat
 
-import rl "vendor:raylib";
-import "core:fmt";
+import rl "vendor:raylib"
+import "core:fmt"
 
 screenWidth :: 1000;
 screenHeight :: 800;
@@ -17,13 +17,12 @@ Animation_State :: enum {
     Death,
 }
 
-// Added to track the overall combat flow
 Combat_State :: enum {
-    PlayerTurn,         // Player is selecting an action
-    PlayerActionExecuting,  // Player's action is being animated
-    EnemyTurn,          // Enemy is deciding what to do
-    EnemyActionExecuting,   // Enemy's action is being animated
-    BattleOver          // Combat has ended (player or enemy dead)
+    PlayerTurn,         
+    PlayerActionExecuting,  
+    EnemyTurn,          
+    EnemyActionExecuting,   
+    BattleOver          
 }
 
 Animation :: struct {
@@ -79,17 +78,23 @@ Player :: struct {
     dexterity: int,
     intelligence: int,
     dead: bool,
+    level: int,
+    current_xp: int,
+    max_xp: int,
 }
 
-init_player :: proc(hp: int, str: int, def: int, agi: int, dex: int, intl: int, ded: bool) -> Player {
+init_player :: proc() -> Player {
     return Player{
-        health = hp,
-        strength = str,
-        defense = def,
-        agility = agi,
-        dexterity = dex,
-        intelligence = intl,
-        dead = ded,
+        health = 100,
+        strength = 10,
+        defense = 5,
+        agility = 3,
+        dexterity = 5,
+        intelligence = 1,
+        dead = false,
+        level = 1,
+        current_xp = 0,
+        max_xp = 100,
     }
 }
 
@@ -139,7 +144,18 @@ load_animation :: proc(tex: rl.Texture2D, frames: int, frame_time: f32, state: A
     };
 }
 
-// Modified to remove playerturn parameter
+// Improved error checking for texture loading
+check_sprite_textures :: proc(textures: SpriteTextures) -> bool {
+    if textures.idle.id == 0 || 
+       textures.attack.id == 0 || 
+       textures.hurt.id == 0 || 
+       textures.death.id == 0 {
+        fmt.println("ERROR: One or more enemy sprite textures failed to load!");
+        return false;
+    }
+    return true;
+}
+
 update_enemy_animation :: proc(enemy: ^Enemy, anims: ^SpriteAnimations) -> bool {
     animation_completed := false;
     
@@ -224,6 +240,85 @@ damage_player :: proc(enemy: ^Enemy, player: ^Player, amount: ^int, anims: ^Spri
     }
 }
 
+// Utility functions added/improved
+use_item :: proc(item_name: cstring, target: ^Enemy, player: ^Player, slime_enemy: ^Enemy, slime_anims: ^SpriteAnimations, plant_enemy: ^Enemy, plant_anims: ^SpriteAnimations) -> bool {
+    if item_name == "Cloudy Vial" {
+        // Healing potion
+        if player.health < 100 {
+            healing_amount := 30;
+            player.health += healing_amount;
+            if player.health > 100 {
+                player.health = 100;
+            }
+            fmt.printf("Used %s! Healed for %d points. Health now: %d\n", 
+                      item_name, healing_amount, player.health);
+            return true;
+        } else {
+            fmt.println("Health is already full!");
+            return false;
+        }
+    } else if item_name == "Vigor Vial" {
+        // Strength boost
+        strength_boost := 5;
+        player.strength += strength_boost;
+        fmt.printf("Used %s! Strength increased by %d points. Strength now: %d\n", 
+                  item_name, strength_boost, player.strength);
+        return true;
+    } else if item_name == "Bomb" {
+        // Damage item
+        damage_amount := 25;
+        
+        if target == slime_enemy {
+            damage_enemy(target, damage_amount, slime_anims);
+        } else {
+            damage_enemy(target, damage_amount, plant_anims);
+        }
+        
+        fmt.printf("Used %s! Dealt %d damage to %s\n", 
+                  item_name, damage_amount, target.name);
+        return true;
+    } else {
+        fmt.printf("Unknown item: %s\n", item_name);
+        return false;
+    }
+}
+
+add_item :: proc(item_name: cstring, item_options: ^[dynamic]Options) {
+    new_item := Options{name = item_name};
+    append(item_options, new_item);
+}
+
+remove_item :: proc(index: int, item_options: ^[dynamic]Options) {
+    if index >= 0 && index < len(item_options) {
+        ordered_remove(item_options, index);
+    }
+}
+
+update_player_stats :: proc(player: Player, stats: ^[]int) {
+    stats[0] = player.health;
+    stats[1] = player.strength;
+    stats[2] = player.defense;
+    stats[3] = player.agility;
+    stats[4] = player.dexterity;
+    stats[5] = player.intelligence;
+}
+
+all_enemies_defeated :: proc(enemies: ..^Enemy) -> bool {
+    for enemy in enemies {
+        if !enemy.dead {
+            return false;
+        }
+    }
+    return true;
+}
+
+save_game :: proc(player: Player, slime_enemy: Enemy, plant_enemy: Enemy) -> bool {
+    // Placeholder for save game functionality
+    fmt.println("Game saved successfully!");
+    return true;
+}
+
+
 main :: proc() {
     using rl;
     InitWindow(screenWidth, screenHeight, "Tales Of Askel");
@@ -248,7 +343,7 @@ main :: proc() {
         { name = "Dex" },
         { name = "Int" },
     };
-    mchar := init_player(100, 10, 5, 3, 5, 1, false);
+    mchar := init_player();
     player_stats: []int = {mchar.health, mchar.strength, mchar.defense, mchar.agility, mchar.dexterity, mchar.intelligence};
     
     // Available items in game
@@ -259,7 +354,7 @@ main :: proc() {
     };
 
     // Item menu options
-    itemOptions := make([]Options, 0, 10);  // Create with capacity for 10 items
+    itemOptions: [dynamic]Options = make([dynamic]Options, 0, 10);   
     add_item("Cloudy Vial", &itemOptions);
 
     // Settings menu options
@@ -322,13 +417,25 @@ main :: proc() {
     settingsTotalHeight: i32 = (settingsMenuHeight + spacing) * i32(len(settingsOptions)) - spacing;
     settingsMenuBoxHeight: i32 = settingsTotalHeight + menuPadding * 2;
 
+    // Xp bar
+    xpBarX: i32 = menuX;
+    xpBarY: i32 = menuY - 50;
+    xpBarWidth: i32 = 180;
+    xpBarHeight: i32 = 10;
+
     // Enemies
     slime_textures := SpriteTextures {
-        idle = rl.LoadTexture("assets/Slime_Idle.png"),
-        attack = rl.LoadTexture("assets/Slime_Attack.png"),
-        hurt = rl.LoadTexture("assets/Slime_Hurt.png"),
-        death = rl.LoadTexture("assets/Slime_Death.png"),
+        idle = LoadTexture("assets/Slime_Idle.png"),
+        attack = LoadTexture("assets/Slime_Attack.png"),
+        hurt = LoadTexture("assets/Slime_Hurt.png"),
+        death = LoadTexture("assets/Slime_Death.png"),
     };
+
+    if !check_sprite_textures(slime_textures) {
+        fmt.println("Failed to load slime textures. Exiting...");
+        CloseWindow();
+        return;
+    }
 
     slime_animations := SpriteAnimations {
         idle = load_animation(slime_textures.idle, 6, 0.2, .Idle),
@@ -336,17 +443,23 @@ main :: proc() {
         hurt = load_animation(slime_textures.hurt, 5, 0.1, .Hurt),
         death = load_animation(slime_textures.death, 10, 0.15, .Death),
     };
-    
+
     plant_textures := SpriteTextures {
-        idle = rl.LoadTexture("assets/Plant_Idle.png"),
-        attack = rl.LoadTexture("assets/Plant_Attack.png"),
-        hurt = rl.LoadTexture("assets/Plant_Hurt.png"),
-        death = rl.LoadTexture("assets/Plant_Death.png"),
+        idle = LoadTexture("assets/Plant_Idle.png"),
+        attack = LoadTexture("assets/Plant_Attack.png"),
+        hurt = LoadTexture("assets/Plant_Hurt.png"),
+        death = LoadTexture("assets/Plant_Death.png"),
     };
 
+    if !check_sprite_textures(plant_textures) {
+        fmt.println("Failed to load plant textures. Exiting...");
+        CloseWindow();
+        return;
+    }
+
     plant_animations := SpriteAnimations {
-        idle = load_animation(plant_textures.idle, 6, 0.2, .Idle),
-        attack = load_animation(plant_textures.attack, 10, 0.1, .Attack),
+        idle = load_animation(plant_textures.idle, 4, 0.2, .Idle),
+        attack = load_animation(plant_textures.attack, 7, 0.1, .Attack),
         hurt = load_animation(plant_textures.hurt, 5, 0.1, .Hurt),
         death = load_animation(plant_textures.death, 10, 0.15, .Death),
     };
@@ -361,7 +474,7 @@ main :: proc() {
     defer rl.UnloadTexture(plant_textures.death);
 
     current_slime_anim: ^Animation = &slime_animations.idle;
-    slime_pos := rl.Vector2{ f32(GetScreenWidth()) / 2, f32(GetScreenHeight()) / 2 };
+    slime_pos := rl.Vector2{ f32(GetScreenWidth()) / 2 - 50, f32(GetScreenHeight()) / 2 };
     slime_enemy := spawn_enemy(slime_pos, current_slime_anim, "Slime");
     
     current_plant_anim: ^Animation = &plant_animations.idle;
@@ -557,7 +670,7 @@ main :: proc() {
                 // If player wants to start a new battle, reset state
                 if mchar.dead {
                     // Reset player
-                    mchar = init_player(100, 10, 5, 3, 5, 1, false);
+                    mchar = init_player();
                     player_stats[0] = mchar.health;
                 }
                 
@@ -612,16 +725,16 @@ main :: proc() {
         }
 
         // Draw player health bar
-        DrawRectangle(20, 100, 200, 20, RED);
-        DrawRectangle(20, 100, (200 * mchar.health) / 100, 20, GREEN);
-        DrawRectangleLines(20, 100, 200, 20, BLACK);
+        DrawRectangle(xpBarX - 20, xpBarY - 50, 200, 20, RED);
+        DrawRectangle(xpBarX - 20, xpBarY - 50, i32(200 * mchar.health) / 100, 20, GREEN);
+        DrawRectangleLines(xpBarX - 20, xpBarY - 50, 200, 20, BLACK);
         health_text := fmt.ctprintf("HP: %d/%d", mchar.health, 100);
-        DrawText(health_text, 25, 103, 15, BLACK);
+        DrawText(health_text, xpBarX - 16, xpBarY - 50, 18, BLACK);
 
         // Draw enemy health bar
         if !active_enemy.dead {
             DrawRectangle(screenWidth - 220, 100, 200, 20, RED);
-            DrawRectangle(screenWidth - 220, 100, (200 * active_enemy.health) / active_enemy.max_health, 20, GREEN);
+            DrawRectangle(screenWidth - 220, 100, i32((200 * active_enemy.health) / active_enemy.max_health), 20, GREEN);
             DrawRectangleLines(screenWidth - 220, 100, 200, 20, BLACK);
             enemy_health_text := fmt.ctprintf("%s: %d/%d", active_enemy.name, active_enemy.health, active_enemy.max_health);
             DrawText(enemy_health_text, screenWidth - 215, 103, 15, BLACK);
@@ -670,22 +783,49 @@ main :: proc() {
 
             // Display item menu options
             if len(itemOptions) > 0 {
-                i = 0;
-                for item in itemOptions {
-                    itemY := itemMenuY + (itemMenuHeight + spacing) * i;
-
+                for i: i32 = 0; i < i32(len(itemOptions)); i += 1 {
+                    itemY := i32(itemMenuY + i32(itemMenuHeight + spacing) * i);
+            
                     if i == itemSelectedIndex {
-                        DrawRectangle(itemMenuX - 5, itemY - 3, itemMenuWidth, itemMenuHeight, BLUE);
-                        DrawRectangleLines(itemMenuX - 5, itemY - 3, itemMenuWidth, itemMenuHeight, BLACK);
-                        DrawText(item.name, itemMenuX + 5, itemY + 5, 20, RAYWHITE);
+                        DrawRectangle(
+                            itemMenuX - 5, 
+                            itemY - 3, 
+                            itemMenuWidth, 
+                            itemMenuHeight, 
+                            BLUE
+                        )
+                        DrawRectangleLines(
+                            itemMenuX - 5, 
+                            itemY - 3, 
+                            itemMenuWidth, 
+                            itemMenuHeight, 
+                            BLACK
+                        )
+                        DrawText(
+                            itemOptions[i].name, 
+                            itemMenuX + 5, 
+                            itemY + 5, 
+                            20, 
+                            RAYWHITE
+                        )
                     } else {
-                        DrawText(item.name, itemMenuX + 5, itemY + 5, 20, BLACK);
+                        DrawText(
+                            itemOptions[i].name, 
+                            itemMenuX + 5, 
+                            itemY + 5, 
+                            20, 
+                            BLACK
+                        )
                     }
-
-                    i += 1;
                 }
             } else {
-                DrawText("No items available", itemMenuX + 5, itemMenuY + 5, 20, BLACK);
+                DrawText(
+                    "No items available", 
+                    itemMenuX + 5, 
+                    itemMenuY + 5, 
+                    20, 
+                    BLACK
+                )
             }
         }
 
@@ -741,10 +881,10 @@ main :: proc() {
         if combat_state == .PlayerTurn && menuSelectedIndex == 0 && !inStatsMenu && !inItemMenu && !inSettingsMenu {
             // Draw a target indicator over the active enemy
             if !active_enemy.dead {
-                DrawRectangleLines(
-                    i32(active_enemy.position.x - 50), 
-                    i32(active_enemy.position.y - 50), 
-                    100, 100, 
+                DrawCircle(
+                    i32(active_enemy.position.x),
+                    i32(active_enemy.position.y - 40), 
+                    7, 
                     RED
                 );
                 
@@ -786,8 +926,8 @@ main :: proc() {
         // Draw item and ability cooldowns
         if combat_state == .PlayerTurn {
             // Add cooldown indicators for abilities (if implemented)
-            cooldown_x := 20;
-            cooldown_y := 130;
+            cooldown_x : i32 = 20;
+            cooldown_y : i32 = 130;
             
             DrawText("Abilities:", cooldown_x, cooldown_y, 18, BLACK);
             
@@ -796,7 +936,7 @@ main :: proc() {
             ability_cooldowns := []i32{0, 2, 1}; // Turns remaining
             
             for i := 0; i < len(ability_names); i += 1 {
-                y_pos := cooldown_y + 25 + (i * 25);
+                y_pos := i32(cooldown_y + 25 + i32(i * 25));
                 DrawText(ability_names[i], cooldown_x, y_pos, 16, BLACK);
                 
                 if ability_cooldowns[i] > 0 {
@@ -809,7 +949,7 @@ main :: proc() {
         }
         
         // Draw battle log
-        DrawRectangle(screenWidth - 250, screenHeight - 150, 230, 130, ColorAlpha(GRAY, 0.65));
+        DrawRectangle(screenWidth - 250, screenHeight - 150, 230, 130, ColorAlpha(GRAY, 0.50));
         DrawRectangleLines(screenWidth - 250, screenHeight - 150, 230, 130, BLACK);
         DrawText("Battle Log:", screenWidth - 240, screenHeight - 140, 18, BLACK);
         
@@ -823,27 +963,28 @@ main :: proc() {
         
         for i := 0; i < len(log_entries); i += 1 {
             y_pos := screenHeight - 115 + (i * 20);
-            DrawText(log_entries[i], screenWidth - 240, y_pos, 14, BLACK);
+            DrawText(log_entries[i], screenWidth - 240, i32(y_pos), 14, BLACK);
         }
         
         // Add experience and level information
-        DrawRectangle(20, screenHeight - 80, 200, 60, ColorAlpha(DARKGRAY, 0.65));
-        DrawRectangleLines(20, screenHeight - 80, 200, 60, BLACK);
+        DrawRectangle(xpBarX - 20, xpBarY - 24, xpBarWidth + 20, xpBarHeight + 39, ColorAlpha(GRAY, 0.50));
+        DrawRectangleLines(xpBarX - 20, xpBarY - 24, xpBarWidth + 20, xpBarHeight + 39, BLACK);
         
-        player_level := 5; // Sample level
-        player_exp := 75; // Current XP
+        player_level := mchar.level; // Sample level
+        player_exp := 0; // Current XP
         exp_needed := 100; // XP needed for next level
         
         level_text := fmt.ctprintf("Level: %d", player_level);
-        DrawText(level_text, 30, screenHeight - 70, 18, BLACK);
+        DrawText(level_text, xpBarX - 18, xpBarY - 24, 18, BLACK);
         
         // Draw XP bar
-        DrawRectangle(30, screenHeight - 40, 180, 10, GRAY);
-        DrawRectangle(30, screenHeight - 40, (180 * player_exp) / exp_needed, 10, PURPLE);
-        DrawRectangleLines(30, screenHeight - 40, 180, 10, BLACK);
+        DrawRectangle(xpBarX - 15, xpBarY - 5, xpBarWidth, xpBarHeight, GRAY);
+        xp_bar_width := i32((180 * player_exp) / exp_needed);
+        DrawRectangle(xpBarX - 15, xpBarY - 5, xpBarWidth, xp_bar_width, PURPLE);     
+        DrawRectangleLines(xpBarX - 15, xpBarY - 5, xpBarWidth, xpBarHeight, BLACK);
         
         exp_text := fmt.ctprintf("XP: %d/%d", player_exp, exp_needed);
-        DrawText(exp_text, 30, screenHeight - 25, 16, BLACK);
+        DrawText(exp_text, xpBarX - 18, xpBarY + 10, 18, BLACK);
         
         // Draw minimap or dungeon progress
         DrawRectangle(screenWidth - 110, 20, 90, 60, ColorAlpha(DARKGRAY, 0.65));
@@ -859,88 +1000,4 @@ main :: proc() {
     }
 
     CloseWindow();
-}
-
-// New function to handle item usage
-use_item :: proc(item_name: cstring, target: ^Enemy, player: ^Player, slime_anims: ^SpriteAnimations, plant_anims: ^SpriteAnimations) -> bool {
-    if item_name == "Cloudy Vial" {
-        // Healing potion
-        if player.health < 100 {
-            healing_amount := 30;
-            player.health += healing_amount;
-            if player.health > 100 {
-                player.health = 100;
-            }
-            fmt.printf("Used %s! Healed for %d points. Health now: %d\n", 
-                      item_name, healing_amount, player.health);
-            return true;
-        } else {
-            fmt.println("Health is already full!");
-            return false;
-        }
-    } else if item_name == "Vigor Vial" {
-        // Strength boost
-        strength_boost := 5;
-        player.strength += strength_boost;
-        fmt.printf("Used %s! Strength increased by %d points. Strength now: %d\n", 
-                  item_name, strength_boost, player.strength);
-        return true;
-    } else if item_name == "Bomb" {
-        // Damage item
-        damage_amount := 25;
-        
-        if target == &slime_enemy {
-            damage_enemy(target, damage_amount, slime_anims);
-        } else {
-            damage_enemy(target, damage_amount, plant_anims);
-        }
-        
-        fmt.printf("Used %s! Dealt %d damage to %s\n", 
-                  item_name, damage_amount, target.name);
-        return true;
-    } else {
-        fmt.printf("Unknown item: %s\n", item_name);
-        return false;
-    }
-}
-
-// New function to add items to the player's inventory
-add_item :: proc(item_name: cstring, item_options: ^[]Options) {
-    new_item := Options{name = item_name};
-    item_options^ = append(item_options^, new_item);
-}
-
-// New function to remove an item from the inventory after use
-remove_item :: proc(index: int, item_options: ^[]Options) {
-    if index >= 0 && index < len(item_options) {
-        // Remove item at the specified index
-        item_options^ = ordered_remove(item_options^, index);
-    }
-}
-
-// New function to update the player's stats display
-update_player_stats :: proc(player: Player, stats: ^[]int) {
-    stats[0] = player.health;
-    stats[1] = player.strength;
-    stats[2] = player.defense;
-    stats[3] = player.agility;
-    stats[4] = player.dexterity;
-    stats[5] = player.intelligence;
-}
-
-// New function to check if all enemies are defeated
-all_enemies_defeated :: proc(enemies: ..^Enemy) -> bool {
-    for enemy in enemies {
-        if !enemy.dead {
-            return false;
-        }
-    }
-    return true;
-}
-
-// New function to save game state
-save_game :: proc(player: Player, slime_enemy: Enemy, plant_enemy: Enemy) -> bool {
-    // Placeholder for save game functionality
-    fmt.println("Game saved successfully!");
-    return true;
 }
