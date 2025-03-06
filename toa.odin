@@ -539,7 +539,7 @@ main :: proc() {
                         status_message = "You take a defensive stance!";
                         // Add defense logic here
                         combat_state = .EnemyTurn;
-                        combat_timer = 0; // Reset timer for enemy turn delay
+                        combat_timer = 0;
                     } else if menuSelectedIndex == 2 { // Stats
                         fmt.println("Selected:", menuOptions[menuSelectedIndex].name);
                         inStatsMenu = true;
@@ -642,24 +642,25 @@ main :: proc() {
             }            
         case .EnemyTurn:
             fmt.println("Enemy Turn State Reached!")
-            fmt.printf("Slime Enemy Dead: %v\n", slime_enemy.dead)
-            fmt.printf("Plant Enemy Dead: %v\n", plant_enemy.dead)
+            fmt.printf("Slime Enemy Dead: %v\n", slime_enemy.dead);
+            fmt.printf("Plant Enemy Dead: %v\n", plant_enemy.dead);
 
             // Find a live enemy to attack
             if !slime_enemy.dead {
                 active_enemy = &slime_enemy;
-                fmt.println("Selected Slime as Active Enemy")
+                fmt.println("Selected Slime as Active Enemy");
             } else if !plant_enemy.dead {
                 active_enemy = &plant_enemy;
-                fmt.println("Selected Plant as Active Enemy")
+                fmt.println("Selected Plant as Active Enemy");
             }
 
             if !active_enemy.dead {
-                fmt.println("Attempting to damage player")
+                fmt.println("Attempting to damage player");
                 status_message = "Enemy is attacking!";
                 damage_player(active_enemy, &mchar, active_enemy.damage, &slime_animations, &plant_animations);
+                combat_state = .PlayerActionExecuting;
             } else {
-                fmt.println("No live enemies to attack")
+                fmt.println("No live enemies to attack");
                 status_message = "Your turn! Choose an action.";
                 combat_state = .PlayerTurn;
             }
@@ -961,17 +962,19 @@ main :: proc() {
         }
         
         // Draw item and ability cooldowns
-        if combat_state == .PlayerTurn {
+        /*if combat_state == .PlayerTurn {
             // Add cooldown indicators for abilities (if implemented)
             cooldown_x : i32 = 20;
             cooldown_y : i32 = 130;
-            
+
+            DrawRectangle(cooldown_x - 3, cooldown_y - 3, 165, 125, ColorAlpha(GRAY, 0.50));
+            DrawRectangleLines(cooldown_x - 3, cooldown_y - 3, 165, 125, BLACK);
             DrawText("Abilities:", cooldown_x, cooldown_y, 18, BLACK);
             
             // Sample ability cooldowns (can be integrated with actual ability system)
             ability_names := []cstring{"Attack", "Fireball", "Heal"};
             ability_cooldowns := []i32{0, 2, 1}; // Turns remaining
-            
+
             for i := 0; i < len(ability_names); i += 1 {
                 y_pos := i32(cooldown_y + 25 + i32(i * 25));
                 DrawText(ability_names[i], cooldown_x, y_pos, 16, BLACK);
@@ -983,7 +986,7 @@ main :: proc() {
                     DrawText("(Ready)", cooldown_x + 100, y_pos, 16, GREEN);
                 }
             }
-        }
+        }*/
         
         // Draw battle log
         DrawRectangle(screenWidth - 250, screenHeight - 150, 230, 130, ColorAlpha(GRAY, 0.50));
