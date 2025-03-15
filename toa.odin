@@ -219,8 +219,15 @@ init_game_state :: proc() -> Game_State {
         menuHeight, 
         menuPadding, 
         spacing,
-        slice.clone(itemOptions[:])
+        make([]Options, len(itemOptions))
     );
+
+    // Manually copy the items
+    for i := 0; i < len(itemOptions); i += 1 {
+        if i < len(items_menu.options) {
+            items_menu.options[i] = itemOptions[i];
+        }
+    }
     
     settings_menu := init_menu(
         menuX + menuWidth + menuPadding*2 + 6,
@@ -1001,6 +1008,12 @@ main :: proc() {
     
     // Initialize game state
     game_state := init_game_state();
+
+    if !FileExists("assets/Slime_Idle.png") || !FileExists("assets/Slime_Attack.png") || !FileExists("assets/Slime_Hurt.png") || !FileExists("assets/Slime_Death.png") || !FileExists("assets/Plant_Idle.png") || !FileExists("assets/Plant_Attack.png") || !FileExists("assets/Plant_Hurt.png") || !FileExists("assets/Plant_Death.png") || !FileExists("assets/Levels/LevelNormal.png") {
+        fmt.println("ERROR: One or more asset files are missing. Please check the assets directory.");
+        CloseWindow();
+        return;
+    }
     
     // Load sprite sheets
     slime_idle_texture := LoadTexture("assets/Slime_Idle.png");
@@ -1012,6 +1025,14 @@ main :: proc() {
     plant_attack_texture := LoadTexture("assets/Plant_Attack.png");
     plant_hurt_texture := LoadTexture("assets/Plant_Hurt.png");
     plant_death_texture := LoadTexture("assets/Plant_Death.png");
+
+    bg_texture := LoadTexture("assets/Levels/LevelNormal.png");
+
+    if slime_idle_texture.id == 0 || slime_attack_texture.id == 0 || slime_hurt_texture.id == 0 || slime_death_texture.id == 0 || plant_idle_texture.id == 0 || plant_attack_texture.id == 0 || plant_hurt_texture.id == 0 || plant_death_texture.id == 0 || bg_texture.id == 0 {
+        fmt.println("ERROR: Failed to load one or more textures. Make sure all asset files exist.");
+        CloseWindow();
+        return;
+    }
     
     // Check textures loaded correctly
     slime_textures := SpriteTextures{
@@ -1044,6 +1065,9 @@ main :: proc() {
     plant_attack_anim := load_animation(plant_attack_texture, 8, 0.12, .Attack);
     plant_hurt_anim := load_animation(plant_hurt_texture, 3, 0.15, .Hurt);
     plant_death_anim := load_animation(plant_death_texture, 10, 0.15, .Death);
+
+    fmt.println("Slime idle animation ID:", slime_idle_anim.texture.id);
+    fmt.println("Plant idle animation ID:", plant_idle_anim.texture.id);
     
     // Group animations
     slime_animations := SpriteAnimations{
@@ -1065,15 +1089,14 @@ main :: proc() {
     plant_enemy := spawn_enemy({600, 400}, &plant_idle_anim, "Plant");
     
     // Add enemies to game state
-    enemies := [2]^Enemy{&slime_enemy, &plant_enemy};
-    game_state.enemies = enemies[:];
+    game_state.enemies = make([]^Enemy, 2);
+    game_state.enemies[0] = &slime_enemy;
+    game_state.enemies[1] = &plant_enemy;
     
     // Player stats array for display
     player_stats := make([]int, 6);
+    defer delete(player_stats);
     update_player_stats(game_state.player, &player_stats);
-    
-    // Background
-    bg_texture := LoadTexture("assets/Levels/LevelNormal.png");
     
     // Game loop
     for !WindowShouldClose() {
