@@ -4,8 +4,5 @@
 # How to build / compile
 ``make build``
 
-# How to run
-``./toa``
-
 # Platforms
-linux only at the moment
+linux, windows
