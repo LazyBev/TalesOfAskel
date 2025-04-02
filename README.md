@@ -1,5 +1,5 @@
 # Preresquites to building
-``odin, make``
+``lua, , love2d, make``
 
 # How to build / compile
 ``make build``
