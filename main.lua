@@ -212,7 +212,7 @@ function love.load()
             }
         ]],
         
-        cardShader = love.graphics.newShader[[
+        --[[cardShader = love.graphics.newShader[[
             extern number time;
             extern vec3 cardColor;
             extern number rarity;
@@ -252,7 +252,7 @@ function love.load()
                 
                 return vec4(finalColor, alpha * color.a);
             }
-        ]],
+        ]]
         
         enemyShader = love.graphics.newShader[[
             extern number time;
@@ -439,42 +439,6 @@ function initGameStates()
         }
     }
 
-    cards = {
-        -- Player cards
-        harpoon = {
-            name = "Harpoon",
-            description = "Deal 8 damage",
-            type = "attack",
-            cost = 1,
-            suit = 1,  -- ♠
-            rank = 7,
-            play = function(target)
-                local damage = 8 - (target.defense or 0)
-                damage = math.max(1, damage)
-                target.health = target.health - damage
-                addDamageEffect(target, damage)
-                return string.format("Harpoon strikes for %d damage!", damage)
-            end
-        },
-        net = {
-            name = "Net",
-            description = "5 damage\n-2 enemy defense",
-            type = "utility",
-            cost = 2,
-            suit = 3,  -- ♦
-            rank = 5,
-            play = function(target)
-                local damage = 5 - math.floor((target.defense or 0) / 2)
-                damage = math.max(1, damage)
-                target.health = target.health - damage
-                target.defense = math.max(0, (target.defense or 0) - 2)
-                addDamageEffect(target, damage)
-                return string.format("Net deals %d damage and reduces defense!", damage)
-            end
-        },
-        -- Update other cards similarly with type/suit/rank/cost
-    }
-    
     -- Animation timers
     animations = {
         time = 0,
@@ -541,17 +505,18 @@ function initGameData()
         }
     }
     
-    -- Card definitions
+    -- Consolidated card definitions with all required properties
     cards = {
         -- Player cards
         dive = {
             name = "Dive Deeper",
             description = "Go deeper (+10 depth, +5 pressure)",
-            color = {0.2, 0.5, 0.8},
-            rarity = 1,
+            type = "utility",
             cost = 1,
-            suit = 2,
-            rank = 1,
+            suit = 2,  -- ♥
+            rank = 1,  -- A
+            rarity = 1,
+            color = {0.2, 0.5, 0.8},
             play = function()
                 player.depth = player.depth + 10
                 player.pressure = math.min(player.pressure + 5, player.maxPressure)
@@ -561,8 +526,12 @@ function initGameData()
         ascend = {
             name = "Ascend",
             description = "Go up (-5 depth, -10 pressure)",
-            color = {0.2, 0.7, 0.9},
+            type = "utility",
+            cost = 1,
+            suit = 2,  -- ♥
+            rank = 2,  -- 2
             rarity = 1,
+            color = {0.2, 0.7, 0.9},
             play = function()
                 player.depth = math.max(0, player.depth - 5)
                 player.pressure = math.max(0, player.pressure - 10)
@@ -572,8 +541,12 @@ function initGameData()
         decompress = {
             name = "Decompress",
             description = "Reduce pressure (-15 pressure)",
-            color = {0.4, 0.6, 0.9},
+            type = "utility",
+            cost = 1,
+            suit = 3,  -- ♦
+            rank = 3,  -- 3
             rarity = 2,
+            color = {0.4, 0.6, 0.9},
             play = function()
                 player.pressure = math.max(0, player.pressure - 15)
                 return "You take time to decompress..."
@@ -581,11 +554,15 @@ function initGameData()
         },
         harpoon = {
             name = "Harpoon",
-            description = "Attack (8 damage)",
-            color = {0.8, 0.3, 0.2},
+            description = "Deal 8 damage",
+            type = "attack",
+            cost = 1,
+            suit = 1,  -- ♠
+            rank = 7,  -- 7
             rarity = 1,
+            color = {0.8, 0.3, 0.2},
             play = function(target)
-                local damage = 8 - target.defense
+                local damage = 8 - (target.defense or 0)
                 damage = math.max(1, damage)
                 target.health = target.health - damage
                 addDamageEffect(target, damage)
@@ -594,14 +571,18 @@ function initGameData()
         },
         net = {
             name = "Entangling Net",
-            description = "Attack (5 damage) and reduce enemy defense by 2",
-            color = {0.5, 0.3, 0.8},
+            description = "5 damage\n-2 enemy defense",
+            type = "utility",
+            cost = 2,
+            suit = 3,  -- ♦
+            rank = 5,  -- 5
             rarity = 2,
+            color = {0.5, 0.3, 0.8},
             play = function(target)
-                local damage = 5 - math.floor(target.defense / 2)
+                local damage = 5 - math.floor((target.defense or 0) / 2)
                 damage = math.max(1, damage)
                 target.health = target.health - damage
-                target.defense = math.max(0, target.defense - 2)
+                target.defense = math.max(0, (target.defense or 0) - 2)
                 addDamageEffect(target, damage)
                 return string.format("Net deals %d damage and reduces defense!", damage)
             end
@@ -609,8 +590,12 @@ function initGameData()
         lantern = {
             name = "Diving Lantern",
             description = "Heal 10 HP and reduce pressure by 5",
-            color = {0.9, 0.9, 0.2},
+            type = "special",
+            cost = 1,
+            suit = 4,  -- ♣
+            rank = 6,  -- 6
             rarity = 2,
+            color = {0.9, 0.9, 0.2},
             play = function()
                 player.health = math.min(player.health + 10, player.maxHealth)
                 player.pressure = math.max(0, player.pressure - 5)
@@ -621,8 +606,12 @@ function initGameData()
         salvage = {
             name = "Salvage",
             description = "Gain a random item and 5-15 gold",
-            color = {0.8, 0.6, 0.3},
+            type = "special",
+            cost = 1,
+            suit = 4,  -- ♣
+            rank = 8,  -- 8
             rarity = 2,
+            color = {0.8, 0.6, 0.3},
             play = function()
                 local items = {"oxygen_tank", "pressure_suit", "ancient_artifact"}
                 local item = items[math.random(#items)]
@@ -635,8 +624,12 @@ function initGameData()
         sonic_pulse = {
             name = "Sonic Pulse",
             description = "Deal 6 damage to enemy and reduce pressure by 8",
-            color = {0.3, 0.5, 0.9},
+            type = "special",
+            cost = 2,
+            suit = 1,  -- ♠
+            rank = 9,  -- 9
             rarity = 3,
+            color = {0.3, 0.5, 0.9},
             play = function(target)
                 local damage = 6
                 target.health = target.health - damage
@@ -650,6 +643,11 @@ function initGameData()
         lurk = {
             name = "Lurk",
             description = "Enemy gains 3 defense",
+            type = "defense",
+            cost = 0,
+            suit = 1,  -- ♠
+            rank = 4,  -- 4
+            rarity = 1,
             color = {0.2, 0.2, 0.3},
             play = function(self)
                 self.defense = self.defense + 3
@@ -659,6 +657,11 @@ function initGameData()
         dark_strike = {
             name = "Dark Strike",
             description = "Attack for 7 damage",
+            type = "attack",
+            cost = 0,
+            suit = 1,  -- ♠
+            rank = 5,  -- 5
+            rarity = 1,
             color = {0.3, 0.1, 0.2},
             play = function(self)
                 local damage = 7
@@ -670,6 +673,11 @@ function initGameData()
         abyssal_gaze = {
             name = "Abyssal Gaze",
             description = "Increase your pressure by 15",
+            type = "utility",
+            cost = 0,
+            suit = 1,  -- ♠
+            rank = 6,  -- 6
+            rarity = 1,
             color = {0.1, 0.1, 0.3},
             play = function(self)
                 player.pressure = math.min(player.pressure + 15, player.maxPressure)
@@ -679,6 +687,11 @@ function initGameData()
         pressure_surge = {
             name = "Pressure Surge",
             description = "Increase your pressure by 20",
+            type = "utility",
+            cost = 0,
+            suit = 2,  -- ♥
+            rank = 7,  -- 7
+            rarity = 1,
             color = {0.2, 0.2, 0.4},
             play = function(self)
                 player.pressure = math.min(player.pressure + 20, player.maxPressure)
@@ -688,6 +701,11 @@ function initGameData()
         crush = {
             name = "Crush",
             description = "Attack for 10 damage",
+            type = "attack",
+            cost = 0,
+            suit = 2,  -- ♥
+            rank = 8,  -- 8
+            rarity = 1,
             color = {0.4, 0.1, 0.1},
             play = function(self)
                 local damage = 10
@@ -699,6 +717,11 @@ function initGameData()
         drown = {
             name = "Drown",
             description = "Lose 15 oxygen",
+            type = "utility",
+            cost = 0,
+            suit = 2,  -- ♥
+            rank = 9,  -- 9
+            rarity = 1,
             color = {0.1, 0.3, 0.4},
             play = function(self)
                 player.oxygen = math.max(0, player.oxygen - 15)
@@ -708,6 +731,11 @@ function initGameData()
         tentacle_lash = {
             name = "Tentacle Lash",
             description = "Attack for 12 damage",
+            type = "attack",
+            cost = 0,
+            suit = 3,  -- ♦
+            rank = 10, -- 10
+            rarity = 1,
             color = {0.5, 0.2, 0.2},
             play = function(self)
                 local damage = 12
@@ -719,6 +747,11 @@ function initGameData()
         abyssal_roar = {
             name = "Abyssal Roar",
             description = "Attack for 8 damage and increase pressure by 10",
+            type = "attack",
+            cost = 0,
+            suit = 3,  -- ♦
+            rank = 11, -- J
+            rarity = 1,
             color = {0.4, 0.2, 0.3},
             play = function(self)
                 local damage = 8
@@ -731,6 +764,11 @@ function initGameData()
         devour = {
             name = "Devour",
             description = "Attack for 15 damage and heal enemy for 10",
+            type = "attack",
+            cost = 0,
+            suit = 3,  -- ♦
+            rank = 12, -- Q
+            rarity = 1,
             color = {0.6, 0.1, 0.1},
             play = function(self)
                 local damage = 15
@@ -759,41 +797,6 @@ function initGameData()
     combatLog = {}
     exploreMessage = ""
     selectedCard = nil
-end
-
-function newGame()
-    -- Reset player
-    player.health = 100
-    player.maxHealth = 100
-    player.depth = 0
-    player.pressure = 0
-    player.oxygen = 100
-    player.inventory = {}
-    player.deck = {}
-    player.discard = {}
-    player.gold = 0
-    
-    -- Create deck from starting cards
-    for _, cardName in ipairs(startingDeck) do
-        table.insert(player.deck, cardName)
-    end
-    
-    -- Shuffle deck
-    shuffleDeck()
-    
-    -- Game variables
-    currentEnemy = nil
-    combatLog = {}
-    exploreMessage = "You begin your descent into the abyss..."
-    selectedCard = nil
-    
-    -- Reset animations
-    animations.damageNumbers = {}
-    animations.healNumbers = {}
-    animations.cards = {}
-    
-    -- Draw initial hand
-    drawHand()
 end
 
 function shuffleDeck()
@@ -839,68 +842,106 @@ function dealHand()
     end
 end
 
-function drawCardFront(x, y, cardName, anim)
+function drawCard(x, y, cardName, animState, isSelected)
     local card = cards[cardName]
-    local suitSymbol = cardVisuals.suitSymbols[card.suit or 1]
-    local rank = cardVisuals.ranks[card.rank or 1]
-    local color = cardVisuals.colors[card.type or "attack"]
+    if not card then return end
     
-    -- Card background
-    love.graphics.setColor(0.95, 0.95, 0.95)
-    love.graphics.rectangle("fill", x, y, cardVisuals.width, cardVisuals.height, cardVisuals.cornerRadius)
+    -- Default animation state if none provided
+    animState = animState or {scale = 1, rotation = 0, offset = {x = 0, y = 0}, hover = false}
+    isSelected = isSelected or false
     
-    -- Border
-    love.graphics.setColor(color)
-    love.graphics.setLineWidth(2)
-    love.graphics.rectangle("line", x, y, cardVisuals.width, cardVisuals.height, cardVisuals.cornerRadius)
+    -- Calculate final position and scale
+    local finalX = x + animState.offset.x
+    local finalY = y - animState.offset.y
+    local finalScale = animState.scale
     
-    -- Suit and rank
-    love.graphics.setFont(mediumFont)
-    love.graphics.setColor(color)
-    -- Top left
-    love.graphics.print(rank, x + 8, y + 8)
-    love.graphics.print(suitSymbol, x + 8, y + 28)
-    -- Bottom right
-    love.graphics.print(rank, x + cardVisuals.width - 28, y + cardVisuals.height - 38)
-    love.graphics.print(suitSymbol, x + cardVisuals.width - 28, y + cardVisuals.height - 18)
+    -- Set up shader
+    --[[love.graphics.setShader(shaders.cardShader)
+    shaders.cardShader:send("time", animations.time)
+    shaders.cardShader:send("cardColor", card.color or {1, 1, 1})
+    shaders.cardShader:send("rarity", card.rarity or 1)
+    shaders.cardShader:send("hover", animState.hover and 1.0 or 0.0)
+    shaders.cardShader:send("selected", isSelected and 1.0 or 0.0)
+    ]]
+
+    -- Draw card background
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.push()
+    love.graphics.translate(finalX, finalY)
+    love.graphics.scale(finalScale)
+    love.graphics.rotate(animState.rotation or 0)
+    love.graphics.rectangle("fill", 
+        -cardVisuals.width/2, 
+        -cardVisuals.height/2,
+        cardVisuals.width, 
+        cardVisuals.height, 
+        cardVisuals.cornerRadius, 
+        cardVisuals.cornerRadius)
+    love.graphics.pop()
+    
+    -- Reset shader for text
+    love.graphics.setShader()
+    
+    -- Draw card content
+    love.graphics.push()
+    love.graphics.translate(finalX, finalY)
+    love.graphics.scale(finalScale)
     
     -- Card name
-    love.graphics.setColor(0.1, 0.1, 0.1)
-    love.graphics.setFont(smallFont)
-    love.graphics.printf(card.name, x + 10, y + 60, cardVisuals.width - 20, "center")
+    love.graphics.setFont(mediumFont)
+    love.graphics.setColor(0, 0, 0, 1)
+    love.graphics.printf(card.name, 
+        -cardVisuals.width/2 + 5, 
+        -cardVisuals.height/2 + 5, 
+        cardVisuals.width - 10, 
+        "center")
     
     -- Description
     love.graphics.setFont(smallFont)
-    love.graphics.printf(card.description, x + 15, y + 90, cardVisuals.width - 30, "center")
+    love.graphics.printf(card.description, 
+        -cardVisuals.width/2 + 5, 
+        -cardVisuals.height/2 + 25, 
+        cardVisuals.width - 10, 
+        "center")
     
-    -- Cost bubble
-    love.graphics.setColor(0.9, 0.8, 0.2)
-    love.graphics.circle("fill", x + cardVisuals.width - 25, y + 20, 12)
-    love.graphics.setColor(0.1, 0.1, 0.1)
-    love.graphics.setFont(smallFont)
-    love.graphics.print(tostring(cards[cardName].cost), x + cardVisuals.width - 30, y + 13)
+    -- Cost
+    if card.cost then
+        love.graphics.setColor(0.9, 0.8, 0.2)
+        love.graphics.circle("fill", cardVisuals.width/2 - 15, -cardVisuals.height/2 + 15, 10)
+        love.graphics.setColor(0, 0, 0)
+        love.graphics.printf(tostring(card.cost), 
+            cardVisuals.width/2 - 20, 
+            -cardVisuals.height/2 + 10, 
+            20, 
+            "center")
+    end
+    
+    -- Suit and Rank
+    local suitSymbol = cardVisuals.suitSymbols[card.suit or 1]
+    local rank = cardVisuals.ranks[card.rank or 1]
+    love.graphics.setColor(card.color or {1, 1, 1})
+    love.graphics.print(rank .. suitSymbol, -cardVisuals.width/2 + 5, -cardVisuals.height/2 + 50)
+    love.graphics.print(rank .. suitSymbol, cardVisuals.width/2 - 25, cardVisuals.height/2 - 20)
+    
+    love.graphics.pop()
 end
 
 function drawHand()
+    local handWidth = #player.hand * 110
+    local startX = (love.graphics.getWidth() - handWidth) / 2
+    
     for i, cardName in ipairs(player.hand) do
-        local card = cards[cardName]
-        local anim = animations.cards[cardName] or {scale = 1, rotation = 0, offset = {x = 0, y = 0}}
+        local anim = animations.cards[cardName] or {
+            scale = 1,
+            rotation = (math.random() - 0.5) * 0.1,
+            offset = {x = 0, y = 0},
+            hover = false,
+            timer = 0
+        }
+        local baseX = startX + (i-1) * 110
+        local baseY = love.graphics.getHeight() - cardVisuals.height - 20
         
-        local baseX = 150 + (i-1)*110
-        local baseY = 400
-        local x = baseX + anim.offset.x
-        local y = baseY - anim.offset.y
-        
-        -- Transform for hover/selection
-        love.graphics.push()
-        love.graphics.translate(x, y)
-        love.graphics.scale(anim.scale, anim.scale)
-        love.graphics.rotate(anim.rotation)
-        
-        -- Draw card
-        drawCardFront(-cardVisuals.width/2, -cardVisuals.height/2, cardName, anim)
-        
-        love.graphics.pop()
+        drawCard(baseX, baseY, cardName, anim, selectedCard == i)
     end
 end
 
@@ -909,42 +950,49 @@ function playCard(cardIndex, target)
     
     local cardName = player.hand[cardIndex]
     local card = cards[cardName]
+    if not card then return end
     
-    if player.energy < card.cost then
+    -- Check energy cost
+    local cost = card.cost or 0
+    if player.energy < cost then
         table.insert(combatLog, "Not enough energy!")
         return
     end
     
-    player.energy = player.energy - card.cost
+    -- Spend energy
+    player.energy = player.energy - cost
     
-    local cardName = player.hand[cardIndex]
-    local card = cards[cardName]
-    local message
-    
-    -- Card play animation
-    animations.cards[cardName].timer = 0
-    animations.cards[cardName].scale = 1.5
+    -- Play animation
+    local anim = animations.cards[cardName] or {}
+    anim.timer = 0
+    anim.scale = 1.5
     
     -- Execute card effect
-    if target then
-        message = card.play(target)
+    local message
+    if card.play then
+        if target and target.health then
+            message = card.play(target)
+        else
+            message = card.play()
+        end
     else
-        message = card.play()
+        message = "Card played: " .. card.name
     end
     
-    -- Move card to discard
+    -- Move to discard
     table.insert(player.discard, cardName)
     table.remove(player.hand, cardIndex)
+    selectedCard = nil
     
-    -- Add to combat log
+    -- Log the action
     table.insert(combatLog, message)
     
-    -- Enemy turn if in combat
-    if currentState == GAME_STATE.COMBAT then
+    -- Trigger enemy turn if in combat
+    if currentState == GAME_STATE.COMBAT and currentEnemy and currentEnemy.health > 0 then
         enemyTurn()
     end
     
-    -- Check for death
+    -- Check game state
     checkGameState()
 end
 
@@ -1131,23 +1179,32 @@ function love.update(dt)
     end
     
     -- Update card animations
-    for i, cardName in ipairs(player.hand) do
+    for _, cardName in ipairs(player.hand) do
         local anim = animations.cards[cardName]
-        if anim then
-            anim.timer = anim.timer + dt
-            
-            if anim.hover or selectedCard == i then
-                anim.scale = math.min(anim.scale + dt * 3, cardVisuals.hoverScale)
-                anim.offset.y = math.min(anim.offset.y + dt * 60, cardVisuals.hoverLift)
-            else
-                anim.scale = math.max(anim.scale - dt * 3, 1.0)
-                anim.offset.y = math.max(anim.offset.y - dt * 60, 0)
-            end
-            
-            -- Reset after play animation
-            if anim.scale > 1.5 then
-                anim.scale = math.max(anim.scale - dt * 5, 1.0)
-            end
+        if not anim then
+            anim = {
+                scale = 1,
+                rotation = (math.random() - 0.5) * 0.1,
+                offset = {x = 0, y = 0},
+                hover = false,
+                timer = 0
+            }
+            animations.cards[cardName] = anim
+        end
+        
+        anim.timer = anim.timer + dt
+        
+        if anim.hover or (selectedCard and player.hand[selectedCard] == cardName) then
+            anim.scale = math.min(anim.scale + dt * 3, cardVisuals.hoverScale)
+            anim.offset.y = math.min(anim.offset.y + dt * 60, cardVisuals.hoverLift)
+        else
+            anim.scale = math.max(anim.scale - dt * 3, 1.0)
+            anim.offset.y = math.max(anim.offset.y - dt * 60, 0)
+        end
+        
+        -- Play animation reset
+        if anim.scale > 1.5 then
+            anim.scale = math.max(anim.scale - dt * 5, 1.0)
         end
     end
     
@@ -1183,20 +1240,47 @@ function love.update(dt)
     end
     
     -- Oxygen depletion
-    if currentState ~= GAME_STATE.MENU and currentState ~= GAME_STATE.GAME_OVER then
-        player.oxygen = math.max(0, player.oxygen - dt * 0.2)
+    if currentState ~= GAME_STATE.MENU or currentState ~= GAME_STATE.GAME_OVER or currentState ~= GAME_STATE.EXPLORE then
+        player.oxygen = math.max(0, player.oxygen - dt * (0.2 + (player.pressure / 10)))
         if player.oxygen <= 0 then
             currentState = GAME_STATE.GAME_OVER
+        end
+    end
+    
+    -- Mouse hover detection for cards
+    if currentState == GAME_STATE.COMBAT then
+        local mx, my = love.mouse.getPosition()
+        local handWidth = #player.hand * 110
+        local startX = (love.graphics.getWidth() - handWidth) / 2
+        
+        for i, cardName in ipairs(player.hand) do
+            local anim = animations.cards[cardName]
+            local x = startX + (i-1) * 110
+            local y = love.graphics.getHeight() - cardVisuals.height - 20 - anim.offset.y
+            local w = cardVisuals.width * anim.scale
+            local h = cardVisuals.height * anim.scale
+            
+            anim.hover = (mx >= x - w/2 and mx <= x + w/2 and
+                         my >= y - h/2 and my <= y + h/2)
         end
     end
     
     -- Mouse hover detection
     local mx, my = love.mouse.getPosition()
     
-    -- Check button hovers
-    for _, btn in pairs(buttons) do
-        btn.hover = (mx >= btn.x and mx <= btn.x + btn.w and
-                     my >= btn.y and my <= btn.y + btn.h)
+    -- Check button hovers with safety checks
+    for name, btn in pairs(buttons) do
+        -- Ensure all required properties exist and are numbers
+        if type(btn.x) ~= "number" or type(btn.y) ~= "number" or 
+           type(btn.w) ~= "number" or type(btn.h) ~= "number" then
+            print("Warning: Button '" .. name .. "' has invalid properties:")
+            print("x=" .. tostring(btn.x) .. ", y=" .. tostring(btn.y) .. 
+                  ", w=" .. tostring(btn.w) .. ", h=" .. tostring(btn.h))
+            btn.hover = false
+        else
+            btn.hover = (mx >= btn.x and mx <= btn.x + btn.w and
+                        my >= btn.y and my <= btn.y + btn.h)
+        end
     end
     
     -- Check card hovers in combat
@@ -1357,7 +1441,7 @@ function drawCombat()
     if currentEnemy then
         -- Enemy name
         love.graphics.setFont(mediumFont)
-        love.graphics.setColor(0.9, 0.4, 0.4)
+        love.graphics.setColor(0.5, 0.4, 0.4)
         love.graphics.print(currentEnemy.name, 600, 20)
         
         -- Enemy health bar
@@ -1402,13 +1486,13 @@ function drawCombat()
     
     -- Combat log
     love.graphics.setColor(0.1, 0.1, 0.2, 0.7)
-    love.graphics.rectangle("fill", 550, 250, 200, 150, 5, 5)
+    love.graphics.rectangle("fill", 590, 70, 200, 150, 5, 5)
     
     love.graphics.setColor(0.8, 0.8, 1, 0.8)
     love.graphics.setFont(smallFont)
     for i, message in ipairs(combatLog) do
-        if i > #combatLog - 5 then -- Show last 5 messages
-            love.graphics.printf(message, 560, 260 + (i - (#combatLog - 4)) * 20, 180, "left")
+        if i > #combatLog - 4 then -- Show last 5 messages
+            love.graphics.printf(message, 595, 48 + (i - (#combatLog - 4)) * 35, 180, "left")
         end
     end
     
@@ -1468,8 +1552,9 @@ function drawHand()
     
     for i, cardName in ipairs(player.hand) do
         local card = cards[cardName]
-        local anim = animations.cards[cardName] or {scale = 1, rotation = 0, offset = {x = 0, y = 0}}
+        if not card then goto continue end
         
+        local anim = animations.cards[cardName] or {scale = 1, rotation = 0, offset = {x = 0, y = 0}}
         local x = 150 + (i-1)*100
         local y = 400
         
@@ -1478,15 +1563,16 @@ function drawHand()
         y = y - anim.offset.y
         
         -- Set up card shader
-        love.graphics.setShader(shaders.cardShader)
+        --[[love.graphics.setShader(shaders.cardShader)
         shaders.cardShader:send("time", animations.time)
-        shaders.cardShader:send("cardColor", card.color)
-        shaders.cardShader:send("rarity", card.rarity)
+        shaders.cardShader:send("cardColor", card.color or {1, 1, 1})
+        shaders.cardShader:send("rarity", card.rarity or 1)
         shaders.cardShader:send("hover", anim.hover and 1.0 or 0.0)
         shaders.cardShader:send("selected", (selectedCard == i) and 1.0 or 0.0)
+        ]]
         
         -- Draw card background
-        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.setColor(0, 0, 0, 0)
         love.graphics.rectangle("fill", 
             x - cardVisuals.width/2 * anim.scale, 
             y - cardVisuals.height/2 * anim.scale,
@@ -1499,7 +1585,7 @@ function drawHand()
         
         -- Draw card text (on top of shader)
         love.graphics.setFont(smallFont)
-        love.graphics.setColor(1, 1, 1, 0.9)
+        love.graphics.setColor(0, 0, 0, 0.9)
         love.graphics.printf(card.name, 
             x - cardVisuals.width/2 * anim.scale, 
             y - cardVisuals.height/2 * anim.scale + 10 * anim.scale, 
@@ -1507,13 +1593,32 @@ function drawHand()
             "center")
         
         -- Card description
-        love.graphics.setColor(0.9, 0.9, 0.9, 0.8)
+        love.graphics.setColor(0, 1, 0, 1)
         love.graphics.printf(card.description, 
             x - cardVisuals.width/2 * anim.scale + 5 * anim.scale, 
             y - cardVisuals.height/2 * anim.scale + 30 * anim.scale, 
             (cardVisuals.width - 10) * anim.scale, 
             "center")
+        
+        -- Draw hitbox for debugging
+        love.graphics.setColor(1, 0, 0, 0.5) -- Red with 50% transparency
+        local hitboxX = x - cardVisuals.width/2 * anim.scale
+        local hitboxY = y - cardVisuals.height/2 * anim.scale
+        local hitboxW = cardVisuals.width * anim.scale
+        local hitboxH = cardVisuals.height * anim.scale
+        love.graphics.rectangle("line", hitboxX, hitboxY, hitboxW, hitboxH)
+        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.rectangle("fill", hitboxX, hitboxY, hitboxW, hitboxH)
+
+        -- Optional: Draw center point
+        love.graphics.setColor(0, 1, 0, 1) -- Green dot
+        love.graphics.circle("fill", x, y, 3)
+        
+        ::continue::
     end
+    
+    -- Reset color to white
+    love.graphics.setColor(1, 1, 1, 1)
 end
 
 function drawButton(button)
@@ -1620,8 +1725,8 @@ function drawFloatingNumbers()
 end
 
 function love.mousepressed(x, y, button)
-    if button ~= 1 then return end -- Only left mouse button
-    
+    if button ~= 1 then return end -- Only handle left mouse button
+
     -- Handle clicks based on game state
     if currentState == GAME_STATE.MENU then
         if buttons.startButton.hover then
@@ -1629,23 +1734,16 @@ function love.mousepressed(x, y, button)
             currentState = GAME_STATE.EXPLORE
         end
     elseif currentState == GAME_STATE.EXPLORE then
-        -- Dive deeper button
         if buttons.diveButton.hover then
             player.depth = player.depth + 10
             player.pressure = math.min(player.pressure + 5, player.maxPressure)
-            
-            -- Chance of encounter increases with depth
             local encounterChance = 0.2 + player.depth / 500
             if math.random() < encounterChance then
                 startCombat()
             else
                 exploreMessage = "You dive deeper into the abyss..."
             end
-        end
-        
-        -- Explore area button
-        if buttons.exploreButton.hover then
-            -- Higher chance of encounter
+        elseif buttons.exploreButton.hover then
             if math.random() < 0.6 then
                 startCombat()
             else
@@ -1656,39 +1754,52 @@ function love.mousepressed(x, y, button)
                     "The water grows colder as you explore."
                 }
                 exploreMessage = events[math.random(#events)]
-                
-                -- Chance to find gold
                 if math.random() < 0.3 then
                     local amount = math.random(5, 10)
                     player.gold = player.gold + amount
                     exploreMessage = exploreMessage .. "\nYou find " .. amount .. " gold!"
                 end
             end
-        end
-        
-        -- Ascend button
-        if buttons.ascendButton.hover then
+        elseif buttons.ascendButton.hover then
             player.depth = math.max(0, player.depth - 10)
             player.pressure = math.max(0, player.pressure - 10)
             player.oxygen = math.min(player.oxygen + 5, player.maxOxygen)
             exploreMessage = "You rise toward the surface..."
         end
     elseif currentState == GAME_STATE.COMBAT then
-        -- Check card clicks
+        -- Card selection
+        local handWidth = #player.hand * 110
+        local startX = (love.graphics.getWidth() - handWidth) / 2
+        
         for i, cardName in ipairs(player.hand) do
-            local anim = animations.cards[cardName]
-            if anim and anim.hover then
-                selectedCard = i
+            local anim = animations.cards[cardName] or {offset = {y = 0}, scale = 1}
+            local cardX = startX + (i - 1) * 110
+            local cardY = love.graphics.getHeight() - cardVisuals.height - 20 - anim.offset.y
+            local w = cardVisuals.width * anim.scale
+            local h = cardVisuals.height * anim.scale
+            
+            if x >= cardX - w/2 and x <= cardX + w/2 and
+               y >= cardY - h/2 and y <= cardY + h/2 then
+                if selectedCard == i then
+                    selectedCard = nil -- Deselect if already selected
+                else
+                    selectedCard = i -- Select the card
+                end
                 return
             end
         end
         
-        -- Check enemy click when card is selected
+        -- Play card on enemy (expanded hitbox for better usability)
         if selectedCard and currentEnemy then
-            local card = cards[player.hand[selectedCard]]
-            if x >= 550 and x <= 750 and y >= 100 and y <= 200 then
+            local enemyHitbox = {
+                x1 = 550, x2 = 750,
+                y1 = 50,  y2 = 250  -- Larger area to click enemy
+            }
+            if x >= enemyHitbox.x1 and x <= enemyHitbox.x2 and
+               y >= enemyHitbox.y1 and y <= enemyHitbox.y2 then
                 playCard(selectedCard, currentEnemy)
                 selectedCard = nil
+                return
             end
         end
         
