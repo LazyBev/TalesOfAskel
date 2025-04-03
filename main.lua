@@ -212,7 +212,7 @@ function love.load()
             }
         ]],
         
-        --[[cardShader = love.graphics.newShader[[
+        cardShader = love.graphics.newShader[[
             extern number time;
             extern vec3 cardColor;
             extern number rarity;
@@ -252,7 +252,7 @@ function love.load()
                 
                 return vec4(finalColor, alpha * color.a);
             }
-        ]]
+        ]],
         
         enemyShader = love.graphics.newShader[[
             extern number time;
@@ -829,17 +829,117 @@ function dealHand()
             table.insert(player.hand, card)
             
             -- Initialize card animation state
-            if not animations.cards[card] then
-                animations.cards[card] = {
-                    hover = false,
-                    scale = 1,
-                    rotation = (math.random() - 0.5) * 0.1,
-                    offset = {x = 0, y = 0},
-                    timer = 0
-                }
+            animations.cards[card] = {
+                hover = false,
+                scale = 1,
+                rotation = (math.random() - 0.5) * 0.1,
+                offset = {x = 0, y = 0},
+                timer = 0
+            }
+        end
+    end
+end
+
+function isMouseOverCard(x, y, cardX, cardY)
+    -- Calculate if mouse is within card boundaries
+    local halfWidth = cardVisuals.width / 2
+    local halfHeight = cardVisuals.height / 2
+    
+    return (x >= cardX - halfWidth and x <= cardX + halfWidth and
+            y >= cardY - halfHeight and y <= cardY + halfHeight)
+end
+
+function updateCardHoverStates()
+    if currentState ~= GAME_STATE.COMBAT then return end
+    
+    local mx, my = love.mouse.getPosition()
+    local handWidth = #player.hand * 110
+    local startX = (love.graphics.getWidth() - handWidth) / 2
+    
+    local anyHovered = false
+    
+    -- First pass to check for hovers
+    for i = #player.hand, 1, -1 do  -- Process in reverse so topmost cards get priority
+        local cardName = player.hand[i]
+        local anim = animations.cards[cardName]
+        if not anim then
+            anim = {
+                hover = false,
+                scale = 1,
+                rotation = (math.random() - 0.5) * 0.1,
+                offset = {x = 0, y = 0},
+                timer = 0
+            }
+            animations.cards[cardName] = anim
+        end
+        
+        local baseX = startX + (i-1) * 110
+        local baseY = love.graphics.getHeight() - cardVisuals.height - 20
+        local cardX = baseX + anim.offset.x
+        local cardY = baseY - anim.offset.y
+        
+        -- Check if mouse is over this card
+        local isOver = isMouseOverCard(mx, my, cardX, cardY, cardVisuals.width, cardVisuals.height, anim.scale)
+        
+        -- Only allow one card to be hovered at a time
+        if isOver and not anyHovered then
+            anim.hover = true
+            anyHovered = true
+        else
+            -- Only turn off hover if this isn't the selected card
+            if not (selectedCard and player.hand[selectedCard] == cardName) then
+                anim.hover = false
             end
         end
     end
+    
+    -- If no card is hovered but one is selected, keep it visually "hovered"
+    if not anyHovered and selectedCard and player.hand[selectedCard] then
+        local cardName = player.hand[selectedCard]
+        if animations.cards[cardName] then
+            animations.cards[cardName].hover = true
+        end
+    end
+end
+
+function updateCardAnimations(dt)
+    for cardName, anim in pairs(animations.cards) do
+        -- Update timer
+        anim.timer = anim.timer + dt
+        
+        -- Smooth transitions for hover effect
+        if anim.hover or (selectedCard and player.hand[selectedCard] == cardName) then
+            -- Calculate target values
+            local targetScale = cardVisuals.hoverScale or 1.2
+            local targetOffsetY = cardVisuals.hoverLift or 40
+            
+            -- Apply smooth transitions
+            anim.scale = anim.scale + (targetScale - anim.scale) * dt * 10
+            anim.offset.y = anim.offset.y + (targetOffsetY - anim.offset.y) * dt * 10
+        else
+            -- Transition back to normal
+            anim.scale = anim.scale + (1.0 - anim.scale) * dt * 10
+            anim.offset.y = anim.offset.y + (0 - anim.offset.y) * dt * 10
+        end
+        
+        -- Apply slight wobble to cards
+        anim.rotation = math.sin(anim.timer * 0.5) * 0.02
+        
+        -- Play animation reset (for when card was just played)
+        if anim.scale > 1.5 then
+            anim.scale = math.max(anim.scale - dt * 5, 1.0)
+        end
+    end
+end
+
+-- Function to determine if mouse is over a card
+function isMouseOverCard(x, y, cardX, cardY, cardWidth, cardHeight, scale)
+    scale = scale or 1
+    local halfWidth = (cardWidth * scale) / 2
+    local halfHeight = (cardHeight * scale) / 2
+    
+    return (x >= cardX - halfWidth and x <= cardX + halfWidth and
+            y >= cardY - halfHeight and y <= cardY + halfHeight)
 end
 
 function drawCard(x, y, cardName, animState, isSelected)
@@ -856,26 +956,41 @@ function drawCard(x, y, cardName, animState, isSelected)
     local finalScale = animState.scale
     
     -- Set up shader
-    --[[love.graphics.setShader(shaders.cardShader)
+    love.graphics.setShader(shaders.cardShader)
     shaders.cardShader:send("time", animations.time)
     shaders.cardShader:send("cardColor", card.color or {1, 1, 1})
     shaders.cardShader:send("rarity", card.rarity or 1)
     shaders.cardShader:send("hover", animState.hover and 1.0 or 0.0)
     shaders.cardShader:send("selected", isSelected and 1.0 or 0.0)
-    ]]
-
-    -- Draw card background
+    
+    -- Draw card background with border
     love.graphics.setColor(1, 1, 1, 1)
     love.graphics.push()
     love.graphics.translate(finalX, finalY)
     love.graphics.scale(finalScale)
     love.graphics.rotate(animState.rotation or 0)
-    love.graphics.rectangle("fill", 
-        -cardVisuals.width/2, 
+    
+    -- Draw border if card is hovered or selected
+    if animState.hover or isSelected then
+        local borderColor = isSelected and {0.9, 0.5, 0.1, 1} or {0.3, 0.7, 0.9, 1}
+        love.graphics.setColor(borderColor)
+        love.graphics.rectangle("fill",
+            -cardVisuals.width/2 - 3,
+            -cardVisuals.height/2 - 3,
+            cardVisuals.width + 6,
+            cardVisuals.height + 6,
+            cardVisuals.cornerRadius + 3,
+            cardVisuals.cornerRadius + 3)
+        love.graphics.setColor(1, 1, 1, 1)
+    end
+    
+    -- Card base
+    love.graphics.rectangle("fill",
+        -cardVisuals.width/2,
         -cardVisuals.height/2,
-        cardVisuals.width, 
-        cardVisuals.height, 
-        cardVisuals.cornerRadius, 
+        cardVisuals.width,
+        cardVisuals.height,
+        cardVisuals.cornerRadius,
         cardVisuals.cornerRadius)
     love.graphics.pop()
     
@@ -887,41 +1002,65 @@ function drawCard(x, y, cardName, animState, isSelected)
     love.graphics.translate(finalX, finalY)
     love.graphics.scale(finalScale)
     
-    -- Card name
+    -- Title background
+    love.graphics.setColor(0.2, 0.2, 0.2, 0.8)
+    love.graphics.rectangle("fill",
+        -cardVisuals.width/2 + 5,
+        -cardVisuals.height/2 + 5,
+        cardVisuals.width - 10,
+        30,
+        5, 5)
+    
+    -- Card name with improved visibility
+    love.graphics.setColor(0.95, 0.95, 0.95, 1)
     love.graphics.setFont(mediumFont)
-    love.graphics.setColor(0, 0, 0, 1)
-    love.graphics.printf(card.name, 
-        -cardVisuals.width/2 + 5, 
-        -cardVisuals.height/2 + 5, 
-        cardVisuals.width - 10, 
+    love.graphics.printf(card.name,
+        -cardVisuals.width/2 + 10,
+        -cardVisuals.height/2 + 12,
+        cardVisuals.width - 20,
         "center")
     
-    -- Description
+    -- Description background
+    love.graphics.setColor(0.8, 0.8, 0.8, 0.8)
+    love.graphics.rectangle("fill",
+        -cardVisuals.width/2 + 5,
+        -cardVisuals.height/2 + 40,
+        cardVisuals.width - 10,
+        60,
+        5, 5)
+    
+    -- Description with improved visibility
+    love.graphics.setColor(0.1, 0.1, 0.1, 1)
     love.graphics.setFont(smallFont)
-    love.graphics.printf(card.description, 
-        -cardVisuals.width/2 + 5, 
-        -cardVisuals.height/2 + 25, 
-        cardVisuals.width - 10, 
+    love.graphics.printf(card.description,
+        -cardVisuals.width/2 + 10,
+        -cardVisuals.height/2 + 45,
+        cardVisuals.width - 20,
         "center")
     
     -- Cost
     if card.cost then
-        love.graphics.setColor(0.9, 0.8, 0.2)
-        love.graphics.circle("fill", cardVisuals.width/2 - 15, -cardVisuals.height/2 + 15, 10)
-        love.graphics.setColor(0, 0, 0)
-        love.graphics.printf(tostring(card.cost), 
-            cardVisuals.width/2 - 20, 
-            -cardVisuals.height/2 + 10, 
-            20, 
+        -- Energy cost circle
+        love.graphics.setColor(0.9, 0.7, 0.2, 1)
+        love.graphics.circle("fill", -cardVisuals.width/2 + 18, -cardVisuals.height/2 + 18, 14)
+        love.graphics.setColor(0, 0, 0, 1)
+        love.graphics.setFont(mediumFont)
+        love.graphics.printf(tostring(card.cost),
+            -cardVisuals.width/2 + 8,
+            -cardVisuals.height/2 + 10,
+            20,
             "center")
     end
     
-    -- Suit and Rank
+    -- Suit and Rank with higher contrast
     local suitSymbol = cardVisuals.suitSymbols[card.suit or 1]
     local rank = cardVisuals.ranks[card.rank or 1]
-    love.graphics.setColor(card.color or {1, 1, 1})
-    love.graphics.print(rank .. suitSymbol, -cardVisuals.width/2 + 5, -cardVisuals.height/2 + 50)
-    love.graphics.print(rank .. suitSymbol, cardVisuals.width/2 - 25, cardVisuals.height/2 - 20)
+    
+    -- Draw suit and rank at corners
+    love.graphics.setColor(0, 0, 0, 0.9)
+    love.graphics.setFont(smallFont)
+    love.graphics.print(rank .. suitSymbol, -cardVisuals.width/2 + 5, cardVisuals.height/2 - 20)
+    love.graphics.print(rank .. suitSymbol, cardVisuals.width/2 - 20, -cardVisuals.height/2 + 5)
     
     love.graphics.pop()
 end
@@ -930,7 +1069,30 @@ function drawHand()
     local handWidth = #player.hand * 110
     local startX = (love.graphics.getWidth() - handWidth) / 2
     
+    -- Update card hover states
+    updateCardHoverStates()
+    
+    -- Draw cards from back to front to properly layer hovered cards
+    local drawOrder = {}
     for i, cardName in ipairs(player.hand) do
+        table.insert(drawOrder, {index = i, name = cardName})
+    end
+    
+    -- Sort so hovered cards draw last (on top)
+    table.sort(drawOrder, function(a, b)
+        local aHover = animations.cards[a.name] and animations.cards[a.name].hover or false
+        local bHover = animations.cards[b.name] and animations.cards[b.name].hover or false
+        if aHover == bHover then
+            -- If hover state is the same, maintain original order
+            return a.index < b.index
+        end
+        -- Hovered cards last
+        return not aHover
+    end)
+    
+    -- Draw cards in the sorted order
+    for _, item in ipairs(drawOrder) do
+        local i, cardName = item.index, item.name
         local anim = animations.cards[cardName] or {
             scale = 1,
             rotation = (math.random() - 0.5) * 0.1,
@@ -938,9 +1100,9 @@ function drawHand()
             hover = false,
             timer = 0
         }
+        
         local baseX = startX + (i-1) * 110
         local baseY = love.graphics.getHeight() - cardVisuals.height - 20
-        
         drawCard(baseX, baseY, cardName, anim, selectedCard == i)
     end
 end
@@ -963,9 +1125,17 @@ function playCard(cardIndex, target)
     player.energy = player.energy - cost
     
     -- Play animation
-    local anim = animations.cards[cardName] or {}
-    anim.timer = 0
-    anim.scale = 1.5
+    animations.playedCard = {
+        name = cardName,
+        timer = 0,
+        startX = (love.graphics.getWidth() / 2),
+        startY = love.graphics.getHeight() - cardVisuals.height - 20,
+        targetX = love.graphics.getWidth() / 2,
+        targetY = love.graphics.getHeight() / 2,
+        scale = 1.5,
+        alpha = 1,
+        rotation = (math.random() - 0.5) * 0.3
+    }
     
     -- Execute card effect
     local message
@@ -983,6 +1153,11 @@ function playCard(cardIndex, target)
     table.insert(player.discard, cardName)
     table.remove(player.hand, cardIndex)
     selectedCard = nil
+    
+    -- Exit targeting mode if active
+    if currentState == GAME_STATE.TARGETING then
+        currentState = GAME_STATE.COMBAT
+    end
     
     -- Log the action
     table.insert(combatLog, message)
@@ -1178,35 +1353,8 @@ function love.update(dt)
         end
     end
     
-    -- Update card animations
-    for _, cardName in ipairs(player.hand) do
-        local anim = animations.cards[cardName]
-        if not anim then
-            anim = {
-                scale = 1,
-                rotation = (math.random() - 0.5) * 0.1,
-                offset = {x = 0, y = 0},
-                hover = false,
-                timer = 0
-            }
-            animations.cards[cardName] = anim
-        end
-        
-        anim.timer = anim.timer + dt
-        
-        if anim.hover or (selectedCard and player.hand[selectedCard] == cardName) then
-            anim.scale = math.min(anim.scale + dt * 3, cardVisuals.hoverScale)
-            anim.offset.y = math.min(anim.offset.y + dt * 60, cardVisuals.hoverLift)
-        else
-            anim.scale = math.max(anim.scale - dt * 3, 1.0)
-            anim.offset.y = math.max(anim.offset.y - dt * 60, 0)
-        end
-        
-        -- Play animation reset
-        if anim.scale > 1.5 then
-            anim.scale = math.max(anim.scale - dt * 5, 1.0)
-        end
-    end
+    -- Update card animations with the new smooth transitions
+    updateCardAnimations(dt)
     
     -- Update enemy animations
     if currentEnemy and currentEnemy.animation then
@@ -1239,33 +1387,35 @@ function love.update(dt)
         end
     end
     
+    -- Update played card animation if active
+    if animations.playedCard then
+        animations.playedCard.timer = animations.playedCard.timer + dt
+        
+        -- Fade out played card animation
+        if animations.playedCard.timer > 1 then
+            animations.playedCard.alpha = math.max(0, 1 - (animations.playedCard.timer - 1) * 2)
+            
+            -- Remove animation when complete
+            if animations.playedCard.alpha <= 0 then
+                animations.playedCard = nil
+            end
+        end
+    end
+    
     -- Oxygen depletion
-    if currentState ~= GAME_STATE.MENU or currentState ~= GAME_STATE.GAME_OVER or currentState ~= GAME_STATE.EXPLORE then
+    if currentState ~= GAME_STATE.MENU and currentState ~= GAME_STATE.GAME_OVER and currentState ~= GAME_STATE.EXPLORE then
         player.oxygen = math.max(0, player.oxygen - dt * (0.2 + (player.pressure / 10)))
         if player.oxygen <= 0 then
             currentState = GAME_STATE.GAME_OVER
         end
     end
     
-    -- Mouse hover detection for cards
+    -- Mouse hover detection for cards using improved system
     if currentState == GAME_STATE.COMBAT then
-        local mx, my = love.mouse.getPosition()
-        local handWidth = #player.hand * 110
-        local startX = (love.graphics.getWidth() - handWidth) / 2
-        
-        for i, cardName in ipairs(player.hand) do
-            local anim = animations.cards[cardName]
-            local x = startX + (i-1) * 110
-            local y = love.graphics.getHeight() - cardVisuals.height - 20 - anim.offset.y
-            local w = cardVisuals.width * anim.scale
-            local h = cardVisuals.height * anim.scale
-            
-            anim.hover = (mx >= x - w/2 and mx <= x + w/2 and
-                         my >= y - h/2 and my <= y + h/2)
-        end
+        updateCardHoverStates()
     end
     
-    -- Mouse hover detection
+    -- Mouse hover detection for buttons
     local mx, my = love.mouse.getPosition()
     
     -- Check button hovers with safety checks
@@ -1280,36 +1430,6 @@ function love.update(dt)
         else
             btn.hover = (mx >= btn.x and mx <= btn.x + btn.w and
                         my >= btn.y and my <= btn.y + btn.h)
-        end
-    end
-    
-    -- Check card hovers in combat
-    if currentState == GAME_STATE.COMBAT then
-        local cardHovered = false
-        for i, cardName in ipairs(player.hand) do
-            local anim = animations.cards[cardName]
-            if anim then
-                local x = 150 + (i-1)*110
-                local y = 400 + anim.offset.y
-                local w = cardVisuals.width * anim.scale
-                local h = cardVisuals.height * anim.scale
-                
-                local wasHovering = anim.hover
-                anim.hover = (mx >= x - w/2 + cardVisuals.width/2 and 
-                              mx <= x + w/2 + cardVisuals.width/2 and
-                              my >= y - h/2 + cardVisuals.height/2 and 
-                              my <= y + h/2 + cardVisuals.height/2)
-                
-                if anim.hover then cardHovered = true end
-            end
-        end
-        
-        if not cardHovered and selectedCard then
-            -- Keep the selected card "hovering" visually
-            local cardName = player.hand[selectedCard]
-            if animations.cards[cardName] then
-                animations.cards[cardName].hover = true
-            end
         end
     end
     
@@ -1700,7 +1820,7 @@ function drawGameOver()
         reason = "The pressure crushed you."
     end
     
-    love.graphics.printf(reason, 300, 280, 400, "center")
+    love.graphics.printf(reason, 300, 280, 400, "left")
     
     -- Restart button
     drawButton(buttons.restartButton)
