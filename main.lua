@@ -1,6 +1,3 @@
--- The Depths - A fully procedural underwater card game
--- Love2D implementation with no external assets
-
 function love.load()
     -- Initialize game with seed
     math.randomseed(os.time())
@@ -218,25 +215,9 @@ function love.load()
         cardShader = love.graphics.newShader[[
             extern number time;
             extern vec3 cardColor;
-            extern number rarity; // 1-3
+            extern number rarity;
             extern number hover;
             extern number selected;
-            
-            float random(vec2 st) {
-                return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
-            }
-            
-            float noise(vec2 p) {
-                vec2 ip = floor(p);
-                vec2 u = fract(p);
-                u = u*u*(3.0-2.0*u);
-                
-                float res = mix(
-                    mix(random(ip), random(ip+vec2(1.0,0.0)), u.x),
-                    mix(random(ip+vec2(0.0,1.0)), random(ip+vec2(1.0,1.0)), u.x), 
-                    u.y);
-                return res*res;
-            }
             
             vec4 effect(vec4 color, Image tex, vec2 tc, vec2 pc) {
                 vec2 uv = tc;
@@ -246,28 +227,27 @@ function love.load()
                 vec2 center = vec2(0.5, 0.5);
                 float radius = 0.45;
                 float dist = distance(uv, center);
-                float alpha = smoothstep(radius, radius-0.01, dist);
                 
-                // Card face with subtle pattern
-                vec3 faceColor = cardColor;
-                float pattern = 0.9 + 0.1 * noise(uv * 20.0);
-                faceColor *= pattern;
+                // Alpha calculation (fixed)
+                float alpha = 1.0 - smoothstep(radius - 0.01, radius, dist);
                 
-                // Border based on rarity
+                // Border calculation (added missing declaration)
+                float border = smoothstep(radius - 0.01, radius, dist) * 
+                            (1.0 - smoothstep(radius, radius + 0.02, dist));
+                
+                // Border colors
                 vec3 borderColor = vec3(0.5);
                 if (rarity > 2.5) borderColor = vec3(0.8, 0.6, 0.2);
                 else if (rarity > 1.5) borderColor = vec3(0.5, 0.3, 0.8);
-                
-                float border = smoothstep(radius-0.01, radius, dist) * 
-                               (1.0 - smoothstep(radius, radius+0.02, dist));
                 
                 // Hover/selection effects
                 float glow = hover * (0.3 + 0.2 * sin(time * 3.0));
                 float pulse = selected * (0.1 + 0.05 * sin(time * 5.0));
                 
-                // Combine elements
-                vec3 finalColor = mix(faceColor, borderColor, border);
-                finalColor = mix(finalColor, vec3(1.0), glow * smoothstep(0.3, 0.5, dist));
+                // Final color composition
+                vec3 baseColor = cardColor * (1.0 - border);
+                vec3 finalColor = mix(baseColor, borderColor, border);
+                finalColor = mix(finalColor, vec3(1.0), glow);
                 finalColor = mix(finalColor, vec3(1.0, 0.9, 0.5), pulse);
                 
                 return vec4(finalColor, alpha * color.a);
@@ -444,11 +424,55 @@ function initGameStates()
     
     -- Card visuals
     cardVisuals = {
-        width = 90, 
-        height = 130,
-        cornerRadius = 8,
-        hoverLift = 20,
-        hoverScale = 1.1
+        width = 100,
+        height = 140,
+        cornerRadius = 10,
+        hoverLift = 30,
+        hoverScale = 1.15,
+        suitSymbols = {"♠", "♥", "♦", "♣"},
+        ranks = {"A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"},
+        colors = {
+            attack = {0.8, 0.2, 0.2},
+            defense = {0.2, 0.5, 0.8},
+            utility = {0.4, 0.8, 0.4},
+            special = {0.8, 0.6, 0.2}
+        }
+    }
+
+    cards = {
+        -- Player cards
+        harpoon = {
+            name = "Harpoon",
+            description = "Deal 8 damage",
+            type = "attack",
+            cost = 1,
+            suit = 1,  -- ♠
+            rank = 7,
+            play = function(target)
+                local damage = 8 - (target.defense or 0)
+                damage = math.max(1, damage)
+                target.health = target.health - damage
+                addDamageEffect(target, damage)
+                return string.format("Harpoon strikes for %d damage!", damage)
+            end
+        },
+        net = {
+            name = "Net",
+            description = "5 damage\n-2 enemy defense",
+            type = "utility",
+            cost = 2,
+            suit = 3,  -- ♦
+            rank = 5,
+            play = function(target)
+                local damage = 5 - math.floor((target.defense or 0) / 2)
+                damage = math.max(1, damage)
+                target.health = target.health - damage
+                target.defense = math.max(0, (target.defense or 0) - 2)
+                addDamageEffect(target, damage)
+                return string.format("Net deals %d damage and reduces defense!", damage)
+            end
+        },
+        -- Update other cards similarly with type/suit/rank/cost
     }
     
     -- Animation timers
@@ -475,7 +499,9 @@ function initGameData()
         deck = {},
         hand = {},
         discard = {},
-        gold = 0
+        gold = 0,
+        energy = 3,
+        maxEnergy = 3
     }
     
     -- Enemy data
@@ -523,6 +549,9 @@ function initGameData()
             description = "Go deeper (+10 depth, +5 pressure)",
             color = {0.2, 0.5, 0.8},
             rarity = 1,
+            cost = 1,
+            suit = 2,
+            rank = 1,
             play = function()
                 player.depth = player.depth + 10
                 player.pressure = math.min(player.pressure + 5, player.maxPressure)
@@ -810,61 +839,83 @@ function dealHand()
     end
 end
 
-function drawHand()
-    love.graphics.setFont(smallFont)
+function drawCardFront(x, y, cardName, anim)
+    local card = cards[cardName]
+    local suitSymbol = cardVisuals.suitSymbols[card.suit or 1]
+    local rank = cardVisuals.ranks[card.rank or 1]
+    local color = cardVisuals.colors[card.type or "attack"]
     
+    -- Card background
+    love.graphics.setColor(0.95, 0.95, 0.95)
+    love.graphics.rectangle("fill", x, y, cardVisuals.width, cardVisuals.height, cardVisuals.cornerRadius)
+    
+    -- Border
+    love.graphics.setColor(color)
+    love.graphics.setLineWidth(2)
+    love.graphics.rectangle("line", x, y, cardVisuals.width, cardVisuals.height, cardVisuals.cornerRadius)
+    
+    -- Suit and rank
+    love.graphics.setFont(mediumFont)
+    love.graphics.setColor(color)
+    -- Top left
+    love.graphics.print(rank, x + 8, y + 8)
+    love.graphics.print(suitSymbol, x + 8, y + 28)
+    -- Bottom right
+    love.graphics.print(rank, x + cardVisuals.width - 28, y + cardVisuals.height - 38)
+    love.graphics.print(suitSymbol, x + cardVisuals.width - 28, y + cardVisuals.height - 18)
+    
+    -- Card name
+    love.graphics.setColor(0.1, 0.1, 0.1)
+    love.graphics.setFont(smallFont)
+    love.graphics.printf(card.name, x + 10, y + 60, cardVisuals.width - 20, "center")
+    
+    -- Description
+    love.graphics.setFont(smallFont)
+    love.graphics.printf(card.description, x + 15, y + 90, cardVisuals.width - 30, "center")
+    
+    -- Cost bubble
+    love.graphics.setColor(0.9, 0.8, 0.2)
+    love.graphics.circle("fill", x + cardVisuals.width - 25, y + 20, 12)
+    love.graphics.setColor(0.1, 0.1, 0.1)
+    love.graphics.setFont(smallFont)
+    love.graphics.print(tostring(cards[cardName].cost), x + cardVisuals.width - 30, y + 13)
+end
+
+function drawHand()
     for i, cardName in ipairs(player.hand) do
         local card = cards[cardName]
         local anim = animations.cards[cardName] or {scale = 1, rotation = 0, offset = {x = 0, y = 0}}
         
-        local x = 150 + (i-1)*100
-        local y = 400
+        local baseX = 150 + (i-1)*110
+        local baseY = 400
+        local x = baseX + anim.offset.x
+        local y = baseY - anim.offset.y
         
-        -- Apply animation offset
-        x = x + anim.offset.x
-        y = y - anim.offset.y
+        -- Transform for hover/selection
+        love.graphics.push()
+        love.graphics.translate(x, y)
+        love.graphics.scale(anim.scale, anim.scale)
+        love.graphics.rotate(anim.rotation)
         
-        -- Set up card shader
-        love.graphics.setShader(shaders.cardShader)
-        shaders.cardShader:send("time", animations.time)
-        shaders.cardShader:send("cardColor", card.color)
-        shaders.cardShader:send("rarity", card.rarity)
-        shaders.cardShader:send("hover", anim.hover and 1.0 or 0.0)
-        shaders.cardShader:send("selected", (selectedCard == i) and 1.0 or 0.0)
+        -- Draw card
+        drawCardFront(-cardVisuals.width/2, -cardVisuals.height/2, cardName, anim)
         
-        -- Draw card background
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.rectangle("fill", 
-            x - cardVisuals.width/2 * anim.scale, 
-            y - cardVisuals.height/2 * anim.scale,
-            cardVisuals.width * anim.scale, 
-            cardVisuals.height * anim.scale, 
-            cardVisuals.cornerRadius * anim.scale, 
-            cardVisuals.cornerRadius * anim.scale)
-        
-        love.graphics.setShader()
-        
-        -- Draw card text (on top of shader)
-        love.graphics.setFont(smallFont)
-        love.graphics.setColor(1, 1, 1, 0.9)
-        love.graphics.printf(card.name, 
-            x - cardVisuals.width/2 * anim.scale, 
-            y - cardVisuals.height/2 * anim.scale + 10 * anim.scale, 
-            cardVisuals.width * anim.scale, 
-            "center")
-        
-        -- Card description
-        love.graphics.setColor(0.9, 0.9, 0.9, 0.8)
-        love.graphics.printf(card.description, 
-            x - cardVisuals.width/2 * anim.scale + 5 * anim.scale, 
-            y - cardVisuals.height/2 * anim.scale + 30 * anim.scale, 
-            (cardVisuals.width - 10) * anim.scale, 
-            "center")
+        love.graphics.pop()
     end
 end
 
 function playCard(cardIndex, target)
     if cardIndex < 1 or cardIndex > #player.hand then return end
+    
+    local cardName = player.hand[cardIndex]
+    local card = cards[cardName]
+    
+    if player.energy < card.cost then
+        table.insert(combatLog, "Not enough energy!")
+        return
+    end
+    
+    player.energy = player.energy - card.cost
     
     local cardName = player.hand[cardIndex]
     local card = cards[cardName]
@@ -1021,7 +1072,7 @@ function newGame()
     player.health = 100
     player.maxHealth = 100
     player.depth = 0
-    player.pressure = 0
+    player.pressure = 1
     player.oxygen = 100
     player.inventory = {}
     player.deck = {}
@@ -1154,7 +1205,7 @@ function love.update(dt)
         for i, cardName in ipairs(player.hand) do
             local anim = animations.cards[cardName]
             if anim then
-                local x = 150 + (i-1)*100
+                local x = 150 + (i-1)*110
                 local y = 400 + anim.offset.y
                 local w = cardVisuals.width * anim.scale
                 local h = cardVisuals.height * anim.scale
@@ -1343,6 +1394,10 @@ function drawCombat()
         love.graphics.rectangle("fill", enemyX - 50 * enemyScale, enemyY - 50 * enemyScale, 
                                100 * enemyScale, 100 * enemyScale)
         love.graphics.setShader()
+        -- Draw energy
+    love.graphics.setFont(mediumFont)
+    love.graphics.setColor(0.9, 0.8, 0.2)
+    love.graphics.print("Energy: "..player.energy.."/"..player.maxEnergy, 30, 130)
     end
     
     -- Combat log
@@ -1367,7 +1422,7 @@ end
 function drawPlayerStats()
     -- Player stats background
     love.graphics.setColor(0.1, 0.1, 0.2, 0.7)
-    love.graphics.rectangle("fill", 20, 20, 200, 100, 5, 5)
+    love.graphics.rectangle("fill", 20, 20, 200, 110, 5, 5)
     
     -- Health bar
     drawStatusBar(30, 30, 180, player.health, player.maxHealth, {0.8, 0.2, 0.2}, {0.6, 0.1, 0.1}, "HP")
@@ -1639,9 +1694,11 @@ function love.mousepressed(x, y, button)
         
         -- End turn button
         if buttons.endTurnButton.hover then
-            drawHand()
+            player.energy = player.maxEnergy
+            dealHand()
             enemyTurn()
             selectedCard = nil
+            return
         end
     elseif currentState == GAME_STATE.GAME_OVER then
         if buttons.restartButton.hover then
