@@ -1,6 +1,8 @@
 function love.load()
     -- Initialize game with seed
     math.randomseed(os.time())
+    local currentDate = os.date("*t")
+    local dayOfWeek = currentDate.wday - 1
     love.graphics.setDefaultFilter("nearest", "nearest")
     
     -- Load fonts
@@ -11,6 +13,112 @@ function love.load()
     
     -- Main shaders
     shaders = {
+        lostBackground = love.graphics.newShader[[
+            #define PI 3.14159265359
+            #define RED1 1.0    // Full vibrant red
+            #define RED2 0.7    // Slightly subdued red
+            #define RED3 0.4    // Deeper, richer red
+            #define SINE1 1.0   // Standard sine modulation
+            #define SINE2 1.2   // Slightly faster modulation
+            #define SINE3 0.5   // Softer sine effect
+            #define MOD1 0.1    // Base modulation
+            #define MOD2 0.3    // Enhanced variation
+            #define MOD3 0.2    // Reduced modulation
+
+            // Add uniform for time and day of week
+            extern number iTime;
+            extern number dayOfWeek;
+
+            // The effect() function now applies a totally different noise/distortion based on the day of week.
+            vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords) {
+                // Standard uv computation, no pixelation.
+                vec2 screenSize = love_ScreenSize.xy;
+                vec2 uv = (screen_coords - 0.5 * screenSize) / length(screenSize);
+                float uv_len = length(uv);
+                
+                // Use the day (0 to 6) to choose a noise variant.
+                float day = mod(dayOfWeek, 7.0);
+                
+                if(day < 1.0) {
+                    // Day 0: Original-style swirl distortion.
+                    float speed = mod(iTime * 0.4, PI * 2.0);
+                    // Incorporate monitor information and day for shape offset.
+                    float new_pixel_angle = atan(uv.y, uv.x) + speed - 20.0 * (0.25 * uv_len + 0.75);
+                    vec2 mid = (screenSize / length(screenSize)) / 2.0;
+                    uv = (vec2(uv_len * cos(new_pixel_angle) + mid.x, uv_len * sin(new_pixel_angle) + mid.y) - mid);
+                }
+                else if(day < 2.0) {
+                    // Day 1: Turbulent swirl with added high-frequency sine distortions.
+                    float angle = iTime + uv_len * 5.0;
+                    uv = vec2(uv.x * cos(angle) - uv.y * sin(angle),
+                            uv.x * sin(angle) + uv.y * cos(angle));
+                    uv += 0.1 * vec2(sin(uv.y * 15.0 + iTime),
+                                    cos(uv.x * 15.0 + iTime));
+                }
+                else if(day < 3.0) {
+                    // Day 2: Wavy noise along both axes.
+                    uv += 0.05 * vec2(sin(uv.y * 20.0 + iTime),
+                                    cos(uv.x * 20.0 + iTime));
+                }
+                else if(day < 4.0) {
+                    // Day 3: Iterative fractal-like distortion.
+                    vec2 originalUV = uv;
+                    for (int i = 0; i < 7; i++) {
+                        uv += 0.1 * vec2(sin(uv.y * 10.0 + iTime * 0.5 + float(i)),
+                                        cos(uv.x * 10.0 + iTime * 0.5 + float(i)));
+                        uv *= 1.1;
+                    }
+                    uv = mix(uv, originalUV, 0.5);
+                }
+                else if(day < 5.0) {
+                    // Day 4: Radial jitter based on the pixel's angle.
+                    float jitter = 0.2 * sin(uv_len * 20.0 - iTime);
+                    float a = atan(uv.y, uv.x);
+                    uv += jitter * vec2(cos(a), sin(a));
+                }
+                else if(day < 6.0) {
+                    // Day 5: Grid-like noise using dot products.
+                    float n = sin(dot(uv, vec2(12.9898,78.233)) + iTime * 3.0);
+                    uv += 0.03 * vec2(n, cos(dot(uv, vec2(12.9898,78.233)) + iTime * 3.0));
+                }
+                else {
+                    // Day 6: Cellular-style distortion by fracturing the uv space.
+                    uv = fract(uv * 2.0 * (sin(iTime * 0.7 + 0.2) + 2.0) + (iTime * 0.25)) - 0.5;
+                    uv *= 1.5;
+                }
+                
+                /// Compute noise loop
+                vec2 uv_loop = uv * 30.0;
+                float speed = iTime * 7.0;
+                vec2 uv2 = vec2(uv_loop.x + uv_loop.y);
+                for (int i = 0; i < 5; i++) {
+                    uv2 += sin(max(uv_loop.x, uv_loop.y)) + uv_loop;
+                    uv_loop += 0.5 * vec2(
+                        cos(5.1123314 + 0.353 * uv2.y + speed * 0.131121),
+                        sin(uv2.x - 0.113 * speed)
+                    );
+                    uv_loop -= cos(uv_loop.x + uv_loop.y) - sin(uv_loop.x * 0.711 - uv_loop.y);
+                }
+
+                // Precomputed constants
+                float paint_res = min(2.0, max(0.0, length(uv_loop) * 0.077)); // 0.035*2.2 = 0.077
+                float c1p = max(0.0, 1.0 - 2.2 * abs(1.0 - paint_res));
+                float c2p = max(0.0, 1.0 - 2.2 * abs(paint_res));
+                float c3p = 1.0 - min(1.0, c1p + c2p);
+                float light = 0.2 * max(c1p * 5.0 - 4.0, 0.0) + 0.4 * max(c2p * 5.0 - 4.0, 0.0);
+
+                // Fixed red colours with subtle time modulation (red channel only)
+                vec4 red1 = vec4(RED1 + MOD1 * sin(iTime + SINE1), 0.0, 0.0, 1.0);
+                vec4 red2 = vec4(RED2 + MOD2 * sin(iTime + SINE2), 0.0, 0.0, 1.0);
+                vec4 red3 = vec4(RED3 + MOD3 * sin(iTime + SINE3), 0.0, 0.0, 1.0);
+
+                // Blend the colours with the computed modulation and light
+                return (0.3 / 3.5) * red1
+                    + (1.0 - 0.3 / 3.5) * (red1 * c1p + red2 * c2p + vec4(c3p * red3.rgb, c3p * red1.a))
+                    + light;
+            }
+        ]],
+
         exploreBackground = love.graphics.newShader[[
             #define halfsqrt3 0.86602540
             #define invsqrt3 0.57735026
@@ -396,11 +504,17 @@ function love.load()
     effectsSettings.dustParticles:setColors(0.8, 0.8, 1, 0.1, 0.8, 0.8, 1, 0)
     effectsSettings.dustParticles:setSpeed(2, 5)
     effectsSettings.dustParticles:setSpin(0.1, 0.5)
+
+    shaders.lostBackground:send("dayOfWeek", dayOfWeek)
     
     -- Initialize game states and data
     initGameStates()
     initGameData()
     newGame()
+end
+
+function getBrightness(color)
+    return 0.299 * color[1] + 0.587 * color[2] + 0.114 * color[3]
 end
 
 function initGameStates()
@@ -415,6 +529,7 @@ function initGameStates()
     -- UI elements with animation properties
     buttons = {
         startButton = {x = 300, y = 300, w = 200, h = 50, text = "Dive In", hover = false, scale = 1, pulse = 0},
+        quitButton = {x = 300, y = 600, w = 200, h = 50, text = "Stay on land", hover = false, scale = 1, pulse = 0},
         restartButton = {x = 300, y = 350, w = 200, h = 50, text = "Try Again", hover = false, scale = 1, pulse = 0},
         endTurnButton = {x = 650, y = 400, w = 100, h = 50, text = "End Turn", hover = false, scale = 1, pulse = 0},
         diveButton = {x = 100, y = 350, w = 150, h = 40, text = "Dive Deeper", hover = false, scale = 1, pulse = 0},
@@ -429,7 +544,7 @@ function initGameStates()
         cornerRadius = 10,
         hoverLift = 30,
         hoverScale = 1.15,
-        suitSymbols = {"♠", "♥", "♦", "♣"},
+        suitSymbols = {"S", "H", "D", "C"},
         ranks = {"A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"},
         colors = {
             attack = {0.8, 0.2, 0.2},
@@ -517,7 +632,7 @@ function initGameData()
             rank = 1,  -- A
             rarity = 1,
             color = {0.2, 0.5, 0.8},
-            play = function()
+            play = function(target)
                 player.depth = player.depth + 10
                 player.pressure = math.min(player.pressure + 5, player.maxPressure)
                 return "You descend deeper into the abyss..."
@@ -532,10 +647,14 @@ function initGameData()
             rank = 2,  -- 2
             rarity = 1,
             color = {0.2, 0.7, 0.9},
-            play = function()
-                player.depth = math.max(0, player.depth - 5)
-                player.pressure = math.max(0, player.pressure - 10)
-                return "You rise toward the surface..."
+            play = function(target)
+                if player.depth < 5 then
+                    return "You're too close to the surface to ascend further!"
+                else
+                    player.depth = math.max(0, player.depth - 5)
+                    player.pressure = math.max(0, player.pressure - 10)
+                    return "You rise toward the surface..."
+                end
             end
         },
         decompress = {
@@ -547,7 +666,7 @@ function initGameData()
             rank = 3,  -- 3
             rarity = 2,
             color = {0.4, 0.6, 0.9},
-            play = function()
+            play = function(target)
                 player.pressure = math.max(0, player.pressure - 15)
                 return "You take time to decompress..."
             end
@@ -589,16 +708,16 @@ function initGameData()
         },
         lantern = {
             name = "Diving Lantern",
-            description = "Heal 10 HP and reduce pressure by 5",
+            description = "Heal 10 HP and increase oxygen by 5",
             type = "special",
             cost = 1,
             suit = 4,  -- ♣
             rank = 6,  -- 6
             rarity = 2,
             color = {0.9, 0.9, 0.2},
-            play = function()
+            play = function(target)
                 player.health = math.min(player.health + 10, player.maxHealth)
-                player.pressure = math.max(0, player.pressure - 5)
+                player.oxygen = math.min(player.oxygen + 5, player.maxOxygen)
                 addHealEffect(10)
                 return "The lantern's glow comforts you..."
             end
@@ -612,7 +731,7 @@ function initGameData()
             rank = 8,  -- 8
             rarity = 2,
             color = {0.8, 0.6, 0.3},
-            play = function()
+            play = function(target)
                 local items = {"oxygen_tank", "pressure_suit", "ancient_artifact"}
                 local item = items[math.random(#items)]
                 table.insert(player.inventory, item)
@@ -623,7 +742,7 @@ function initGameData()
         },
         sonic_pulse = {
             name = "Sonic Pulse",
-            description = "Deal 6 damage to enemy and reduce pressure by 8",
+            description = "Deal 6 damage to enemy",
             type = "special",
             cost = 2,
             suit = 1,  -- ♠
@@ -633,7 +752,6 @@ function initGameData()
             play = function(target)
                 local damage = 6
                 target.health = target.health - damage
-                player.pressure = math.max(0, player.pressure - 8)
                 addDamageEffect(target, damage)
                 return "Sonic waves disrupt the water around you!"
             end
@@ -822,21 +940,41 @@ function dealHand()
         table.insert(combatLog, "Your discard pile is shuffled into your deck.")
     end
     
-    -- Draw up to 5 cards
-    for i = 1, 5 do
-        if #player.deck > 0 then
-            local card = table.remove(player.deck, 1)
-            table.insert(player.hand, card)
+    -- Track drawn cards to avoid duplicates
+    local drawnCards = {} -- Table to store card names already in hand
+    
+    -- Draw up to 5 unique cards
+    local cardsToDraw = math.min(5, #player.deck) -- Limit to deck size
+    while #player.hand < cardsToDraw and #player.deck > 0 do
+        local cardIndex = 1
+        local cardName = player.deck[cardIndex]
+        
+        -- Check if this card is already in hand
+        if not drawnCards[cardName] then
+            -- Add to hand and mark as drawn
+            table.insert(player.hand, cardName)
+            drawnCards[cardName] = true
+            
+            -- Remove from deck
+            table.remove(player.deck, cardIndex)
             
             -- Initialize card animation state
-            animations.cards[card] = {
+            animations.cards[cardName] = {
                 hover = false,
                 scale = 1,
                 rotation = (math.random() - 0.5) * 0.1,
                 offset = {x = 0, y = 0},
                 timer = 0
             }
+        else
+            -- Move duplicate to end of deck and try next card
+            table.insert(player.deck, table.remove(player.deck, cardIndex))
         end
+    end
+    
+    -- Log if fewer than 5 cards were drawn due to duplicates
+    if #player.hand < 5 and #player.deck > 0 then
+        table.insert(combatLog, "Some cards were skipped to avoid duplicates.")
     end
 end
 
@@ -1013,7 +1151,7 @@ function drawCard(x, y, cardName, animState, isSelected)
     
     -- Card name with improved visibility
     love.graphics.setColor(0.95, 0.95, 0.95, 1)
-    love.graphics.setFont(mediumFont)
+    love.graphics.setFont(smallFont)
     love.graphics.printf(card.name,
         -cardVisuals.width/2 + 10,
         -cardVisuals.height/2 + 12,
@@ -1042,22 +1180,22 @@ function drawCard(x, y, cardName, animState, isSelected)
     if card.cost then
         -- Energy cost circle
         love.graphics.setColor(0.9, 0.7, 0.2, 1)
-        love.graphics.circle("fill", -cardVisuals.width/2 + 18, -cardVisuals.height/2 + 18, 14)
+        love.graphics.circle("fill", cardVisuals.width/2 - 18, cardVisuals.height/2 - 18, 14)
         love.graphics.setColor(0, 0, 0, 1)
-        love.graphics.setFont(mediumFont)
+        love.graphics.setFont(smallFont)
         love.graphics.printf(tostring(card.cost),
-            -cardVisuals.width/2 + 8,
-            -cardVisuals.height/2 + 10,
+            cardVisuals.width/2 - 27,
+            cardVisuals.height/2 - 27,
             20,
             "center")
     end
     
-    -- Suit and Rank with higher contrast
+    -- Suit and Rank with adaptive color
     local suitSymbol = cardVisuals.suitSymbols[card.suit or 1]
     local rank = cardVisuals.ranks[card.rank or 1]
-    
-    -- Draw suit and rank at corners
-    love.graphics.setColor(0, 0, 0, 0.9)
+    local brightness = getBrightness(card.color)
+    local textColor = brightness < 0.5 and {1, 1, 1, 1} or {0, 0, 0, 1}
+    love.graphics.setColor(textColor)
     love.graphics.setFont(smallFont)
     love.graphics.print(rank .. suitSymbol, -cardVisuals.width/2 + 5, cardVisuals.height/2 - 20)
     love.graphics.print(rank .. suitSymbol, cardVisuals.width/2 - 20, -cardVisuals.height/2 + 5)
@@ -1068,6 +1206,7 @@ end
 function drawHand()
     local handWidth = #player.hand * 110
     local startX = (love.graphics.getWidth() - handWidth) / 2
+    local debugHitboxes = true -- Toggle this to true for debugging hitboxes
     
     -- Update card hover states
     updateCardHoverStates()
@@ -1083,11 +1222,9 @@ function drawHand()
         local aHover = animations.cards[a.name] and animations.cards[a.name].hover or false
         local bHover = animations.cards[b.name] and animations.cards[b.name].hover or false
         if aHover == bHover then
-            -- If hover state is the same, maintain original order
-            return a.index < b.index
+            return a.index < b.index -- Maintain original order if hover state is the same
         end
-        -- Hovered cards last
-        return not aHover
+        return not aHover -- Hovered cards last
     end)
     
     -- Draw cards in the sorted order
@@ -1104,14 +1241,41 @@ function drawHand()
         local baseX = startX + (i-1) * 110
         local baseY = love.graphics.getHeight() - cardVisuals.height - 20
         drawCard(baseX, baseY, cardName, anim, selectedCard == i)
+
+        if debugHitboxes then
+            love.graphics.setColor(1, 0, 0, 0.5) -- Red with 50% transparency
+            local hitboxX = baseX - cardVisuals.width/2 * anim.scale + anim.offset.x
+            local hitboxY = baseY - cardVisuals.height/2 * anim.scale - anim.offset.y
+            local hitboxW = cardVisuals.width * anim.scale
+            local hitboxH = cardVisuals.height * anim.scale
+            love.graphics.rectangle("line", hitboxX, hitboxY, hitboxW, hitboxH)
+            
+            --[[ Draw center point
+            love.graphics.setColor(0, 1, 0, 1) -- Green dot
+            love.graphics.circle("fill", baseX + anim.offset.x, baseY - anim.offset.y, 3)
+            ]]
+        end
     end
+    
+    -- Reset color to white
+    love.graphics.setColor(1, 1, 1, 1)
 end
 
 function playCard(cardIndex, target)
     if cardIndex < 1 or cardIndex > #player.hand then return end
-    
     local cardName = player.hand[cardIndex]
-    local card = cards[cardName]
+    
+    -- Find the card by display name
+    local card = nil
+    local cardId = nil
+    for id, cardData in pairs(cards) do
+        if cardData.name == cardName then
+            card = cardData
+            cardId = id
+            break
+        end
+    end
+    
     if not card then return end
     
     -- Check energy cost
@@ -1128,8 +1292,8 @@ function playCard(cardIndex, target)
     animations.playedCard = {
         name = cardName,
         timer = 0,
-        startX = (love.graphics.getWidth() / 2),
-        startY = love.graphics.getHeight() - cardVisuals.height - 20,
+        startX = love.graphics.getWidth() / 2,
+        startY = love.graphics.getHeight() - (cardVisuals.height - 20),
         targetX = love.graphics.getWidth() / 2,
         targetY = love.graphics.getHeight() / 2,
         scale = 1.5,
@@ -1150,7 +1314,7 @@ function playCard(cardIndex, target)
     end
     
     -- Move to discard
-    table.insert(player.discard, cardName)
+    table.insert(player.discard, cardId)
     table.remove(player.hand, cardIndex)
     selectedCard = nil
     
@@ -1341,6 +1505,9 @@ function love.update(dt)
     shaders.fightBackground:send("iResolution", {love.graphics.getWidth(), love.graphics.getHeight()})
     shaders.water:send("time", animations.time)
     shaders.water:send("depth", player.depth)
+    if not shaderTime then shaderTime = 0 end
+    shaderTime = shaderTime + dt
+    shaders.lostBackground:send("iTime", shaderTime)
     
     -- Update button animations
     for _, button in pairs(buttons) do
@@ -1478,10 +1645,12 @@ function love.draw()
         love.graphics.setShader()
         drawCombat()
     elseif currentState == GAME_STATE.GAME_OVER then
+        love.graphics.setShader(shaders.lostBackground)
+        love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
+        love.graphics.setShader()
         drawGameOver()
     end
     
-    -- Draw floating numbers
     drawFloatingNumbers()
 end
 
@@ -1517,6 +1686,9 @@ function drawMenu()
     
     -- Start button
     drawButton(buttons.startButton)
+
+    -- Quit button
+    drawButton(buttons.quitButton)
 end
 
 function drawExplore()
@@ -1599,9 +1771,9 @@ function drawCombat()
                                100 * enemyScale, 100 * enemyScale)
         love.graphics.setShader()
         -- Draw energy
-    love.graphics.setFont(mediumFont)
-    love.graphics.setColor(0.9, 0.8, 0.2)
-    love.graphics.print("Energy: "..player.energy.."/"..player.maxEnergy, 30, 130)
+        love.graphics.setFont(mediumFont)
+        love.graphics.setColor(0.9, 0.8, 0.2)
+        love.graphics.print("Energy: "..player.energy.."/"..player.maxEnergy, 30, 130)
     end
     
     -- Combat log
@@ -1624,25 +1796,17 @@ function drawCombat()
 end
 
 function drawPlayerStats()
-    -- Player stats background
+    print("Drawing stats - Health: " .. player.health .. ", Oxygen: " .. player.oxygen .. ", Pressure: " .. player.pressure)
     love.graphics.setColor(0.1, 0.1, 0.2, 0.7)
     love.graphics.rectangle("fill", 20, 20, 200, 110, 5, 5)
     
-    -- Health bar
     drawStatusBar(30, 30, 180, player.health, player.maxHealth, {0.8, 0.2, 0.2}, {0.6, 0.1, 0.1}, "HP")
-    
-    -- Oxygen bar
     drawStatusBar(30, 50, 180, player.oxygen, player.maxOxygen, {0.2, 0.6, 0.9}, {0.1, 0.3, 0.7}, "O₂")
-    
-    -- Pressure bar
     drawStatusBar(30, 70, 180, player.pressure, player.maxPressure, {0.4, 0.2, 0.8}, {0.2, 0.1, 0.6}, "Pressure")
     
-    -- Depth indicator
     love.graphics.setFont(smallFont)
     love.graphics.setColor(0.8, 0.8, 1)
     love.graphics.print(string.format("Depth: %dm", player.depth), 30, 90)
-    
-    -- Card counts
     love.graphics.setColor(0.7, 0.7, 0.8)
     love.graphics.print(string.format("Deck: %d   Discard: %d", #player.deck, #player.discard), 30, 110)
 end
@@ -1665,80 +1829,6 @@ function drawStatusBar(x, y, width, value, maxValue, color1, color2, label)
     love.graphics.setFont(smallFont)
     love.graphics.setColor(1, 1, 1, 1)
     love.graphics.print(string.format("%s: %d/%d", label, math.floor(value), maxValue), x + 5, y, 0, 1, 1)
-end
-
-function drawHand()
-    love.graphics.setFont(smallFont)
-    
-    for i, cardName in ipairs(player.hand) do
-        local card = cards[cardName]
-        if not card then goto continue end
-        
-        local anim = animations.cards[cardName] or {scale = 1, rotation = 0, offset = {x = 0, y = 0}}
-        local x = 150 + (i-1)*100
-        local y = 400
-        
-        -- Apply animation offset
-        x = x + anim.offset.x
-        y = y - anim.offset.y
-        
-        -- Set up card shader
-        --[[love.graphics.setShader(shaders.cardShader)
-        shaders.cardShader:send("time", animations.time)
-        shaders.cardShader:send("cardColor", card.color or {1, 1, 1})
-        shaders.cardShader:send("rarity", card.rarity or 1)
-        shaders.cardShader:send("hover", anim.hover and 1.0 or 0.0)
-        shaders.cardShader:send("selected", (selectedCard == i) and 1.0 or 0.0)
-        ]]
-        
-        -- Draw card background
-        love.graphics.setColor(0, 0, 0, 0)
-        love.graphics.rectangle("fill", 
-            x - cardVisuals.width/2 * anim.scale, 
-            y - cardVisuals.height/2 * anim.scale,
-            cardVisuals.width * anim.scale, 
-            cardVisuals.height * anim.scale, 
-            cardVisuals.cornerRadius * anim.scale, 
-            cardVisuals.cornerRadius * anim.scale)
-        
-        love.graphics.setShader()
-        
-        -- Draw card text (on top of shader)
-        love.graphics.setFont(smallFont)
-        love.graphics.setColor(0, 0, 0, 0.9)
-        love.graphics.printf(card.name, 
-            x - cardVisuals.width/2 * anim.scale, 
-            y - cardVisuals.height/2 * anim.scale + 10 * anim.scale, 
-            cardVisuals.width * anim.scale, 
-            "center")
-        
-        -- Card description
-        love.graphics.setColor(0, 1, 0, 1)
-        love.graphics.printf(card.description, 
-            x - cardVisuals.width/2 * anim.scale + 5 * anim.scale, 
-            y - cardVisuals.height/2 * anim.scale + 30 * anim.scale, 
-            (cardVisuals.width - 10) * anim.scale, 
-            "center")
-        
-        -- Draw hitbox for debugging
-        love.graphics.setColor(1, 0, 0, 0.5) -- Red with 50% transparency
-        local hitboxX = x - cardVisuals.width/2 * anim.scale
-        local hitboxY = y - cardVisuals.height/2 * anim.scale
-        local hitboxW = cardVisuals.width * anim.scale
-        local hitboxH = cardVisuals.height * anim.scale
-        love.graphics.rectangle("line", hitboxX, hitboxY, hitboxW, hitboxH)
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.rectangle("fill", hitboxX, hitboxY, hitboxW, hitboxH)
-
-        -- Optional: Draw center point
-        love.graphics.setColor(0, 1, 0, 1) -- Green dot
-        love.graphics.circle("fill", x, y, 3)
-        
-        ::continue::
-    end
-    
-    -- Reset color to white
-    love.graphics.setColor(1, 1, 1, 1)
 end
 
 function drawButton(button)
