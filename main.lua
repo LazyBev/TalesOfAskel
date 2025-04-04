@@ -665,9 +665,6 @@ end
 
 -- Attack enemy
 function attackEnemy()
-    -- Oxygen consumption during combat
-    consumeOxygen()
-    
     -- Apply temporary attack boost if active
     local attackBoost = 0
     if player.tempAttackBoost then
@@ -709,9 +706,6 @@ end
 
 -- Counter enemy attack
 function counterEnemy()
-    -- Oxygen consumption during combat
-    consumeOxygen()
-    
     -- Calculate counter success chance
     local counterChance = calculateCounterChance(player.luck)
     local counterSuccess = math.random(100) <= counterChance
@@ -753,9 +747,6 @@ end
 
 -- Run from combat
 function runFromCombat()
-    -- Oxygen consumption during combat
-    consumeOxygen()
-    
     -- Calculate run success chance
     local runChance = calculateRunChance(player.luck)
     if math.random(100) <= runChance then
@@ -1258,7 +1249,7 @@ function love.update(dt)
     updateButtons(dt)
     
     -- Consume oxygen when exploring
-    if currentState == GameState.EXPLORE then
+    if currentState == GameState.EXPLORE or currentState == GameState.COMBAT then
         consumeOxygen()
     end
     
