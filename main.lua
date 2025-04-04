@@ -34,7 +34,7 @@ function love.load()
                 // Standard uv computation, no pixelation.
                 vec2 screenSize = love_ScreenSize.xy;
                 vec2 uv = (screen_coords - 0.5 * screenSize) / length(screenSize);
-                float uv_len = length(uv);
+                float uv_len = max(length(uv), 0.0001);
                 
                 // Use the day (0 to 6) to choose a noise variant.
                 float day = mod(dayOfWeek, 7.0);
@@ -485,8 +485,8 @@ function love.load()
     
     -- Initialize particle systems with shaders
     effectsSettings = {
-        bubbles = love.graphics.newParticleSystem(love.graphics.newCanvas(32, 32), 100),
-        dustParticles = love.graphics.newParticleSystem(love.graphics.newCanvas(16, 16), 100)
+        bubbles = love.graphics.newParticleSystem(love.graphics.newCanvas(32, 32, {format = "normal"}), 100),
+        dustParticles = love.graphics.newParticleSystem(love.graphics.newCanvas(16, 16, {format = "normal"}), 100)
     }
 
     -- Configure particles
@@ -511,6 +511,13 @@ function love.load()
     initGameStates()
     initGameData()
     newGame()
+end
+
+function cleanup()
+    shaders = nil
+    effectsSettings.bubbles:release()
+    effectsSettings.dustParticles:release()
+    collectgarbage()
 end
 
 function getBrightness(color)
@@ -575,9 +582,7 @@ function initGameData()
         oxygen = 100,
         maxOxygen = 100,
         inventory = {},
-        deck = {},
         hand = {},
-        discard = {},
         gold = 0,
         energy = 3,
         maxEnergy = 3
@@ -898,7 +903,6 @@ function initGameData()
         }
     }
     
-    -- Starting deck
     startingDeck = {
         "dive", "dive", "dive",
         "ascend", "ascend",
@@ -913,69 +917,53 @@ function initGameData()
     -- Game variables
     currentEnemy = nil
     combatLog = {}
-    exploreMessage = ""
+    exploreMessage = "You begin your descent into the abyss..."
     selectedCard = nil
 end
 
-function shuffleDeck()
+--[[function shuffleDeck()
     for i = #player.deck, 2, -1 do
         local j = math.random(i)
         player.deck[i], player.deck[j] = player.deck[j], player.deck[i]
     end
 end
+]]
 
 function dealHand()
-    -- Move current hand to discard
-    for _, card in ipairs(player.hand) do
-        table.insert(player.discard, card)
-    end
+    -- Clear current hand
     player.hand = {}
     
-    -- If deck is empty, shuffle discard into deck
-    if #player.deck == 0 then
-        if #player.discard == 0 then return end
-        player.deck = player.discard
-        player.discard = {}
-        shuffleDeck()
-        table.insert(combatLog, "Your discard pile is shuffled into your deck.")
-    end
+    -- Draw 5 unique cards from startingDeck
+    local drawnCards = {} -- Track drawn cards to avoid duplicates in one hand
+    local cardsToDraw = 5
     
-    -- Track drawn cards to avoid duplicates
-    local drawnCards = {} -- Table to store card names already in hand
-    
-    -- Draw up to 5 unique cards
-    local cardsToDraw = math.min(5, #player.deck) -- Limit to deck size
-    while #player.hand < cardsToDraw and #player.deck > 0 do
-        local cardIndex = 1
-        local cardName = player.deck[cardIndex]
+    for i = 1, cardsToDraw do
+        local cardName
+        local attempts = 0
+        local maxAttempts = #startingDeck * 2 -- Prevent infinite loop
         
-        -- Check if this card is already in hand
+        -- Keep trying until we get a unique card
+        repeat
+            cardName = startingDeck[math.random(#startingDeck)]
+            attempts = attempts + 1
+        until not drawnCards[cardName] or attempts >= maxAttempts
+        
         if not drawnCards[cardName] then
-            -- Add to hand and mark as drawn
             table.insert(player.hand, cardName)
             drawnCards[cardName] = true
             
-            -- Remove from deck
-            table.remove(player.deck, cardIndex)
-            
             -- Initialize card animation state
-            animations.cards[cardName] = {
+            animations.cards[cardName] = animations.cards[cardName] or {
                 hover = false,
                 scale = 1,
                 rotation = (math.random() - 0.5) * 0.1,
                 offset = {x = 0, y = 0},
                 timer = 0
             }
-        else
-            -- Move duplicate to end of deck and try next card
-            table.insert(player.deck, table.remove(player.deck, cardIndex))
         end
     end
     
-    -- Log if fewer than 5 cards were drawn due to duplicates
-    if #player.hand < 5 and #player.deck > 0 then
-        table.insert(combatLog, "Some cards were skipped to avoid duplicates.")
-    end
+    table.insert(combatLog, "A new hand is drawn from the infinite depths.")
 end
 
 function isMouseOverCard(x, y, cardX, cardY)
@@ -1042,30 +1030,32 @@ end
 
 function updateCardAnimations(dt)
     for cardName, anim in pairs(animations.cards) do
-        -- Update timer
-        anim.timer = anim.timer + dt
-        
-        -- Smooth transitions for hover effect
-        if anim.hover or (selectedCard and player.hand[selectedCard] == cardName) then
-            -- Calculate target values
-            local targetScale = cardVisuals.hoverScale or 1.2
-            local targetOffsetY = cardVisuals.hoverLift or 40
+        if anim then
+            -- Update timer
+            anim.timer = anim.timer + dt
             
-            -- Apply smooth transitions
-            anim.scale = anim.scale + (targetScale - anim.scale) * dt * 10
-            anim.offset.y = anim.offset.y + (targetOffsetY - anim.offset.y) * dt * 10
-        else
-            -- Transition back to normal
-            anim.scale = anim.scale + (1.0 - anim.scale) * dt * 10
-            anim.offset.y = anim.offset.y + (0 - anim.offset.y) * dt * 10
-        end
-        
-        -- Apply slight wobble to cards
-        anim.rotation = math.sin(anim.timer * 0.5) * 0.02
-        
-        -- Play animation reset (for when card was just played)
-        if anim.scale > 1.5 then
-            anim.scale = math.max(anim.scale - dt * 5, 1.0)
+            -- Smooth transitions for hover effect
+            if anim.hover or (selectedCard and player.hand[selectedCard] == cardName) then
+                -- Calculate target values
+                local targetScale = cardVisuals.hoverScale or 1.2
+                local targetOffsetY = cardVisuals.hoverLift or 40
+                
+                -- Apply smooth transitions
+                anim.scale = anim.scale + (targetScale - anim.scale) * dt * 10
+                anim.offset.y = anim.offset.y + (targetOffsetY - anim.offset.y) * dt * 10
+            else
+                -- Transition back to normal
+                anim.scale = anim.scale + (1.0 - anim.scale) * dt * 10
+                anim.offset.y = anim.offset.y + (0 - anim.offset.y) * dt * 10
+            end
+            
+            -- Apply slight wobble to cards
+            anim.rotation = math.sin(anim.timer * 0.5) * 0.02
+            
+            -- Play animation reset (for when card was just played)
+            if anim.scale > 1.5 then
+                anim.scale = math.max(anim.scale - dt * 5, 1.0)
+            end
         end
     end
 end
@@ -1313,8 +1303,7 @@ function playCard(cardIndex, target)
         message = "Card played: " .. card.name
     end
     
-    -- Move to discard
-    table.insert(player.discard, cardId)
+    -- Remove from hand (no discard)
     table.remove(player.hand, cardIndex)
     selectedCard = nil
     
@@ -1462,17 +1451,8 @@ function newGame()
     player.pressure = 1
     player.oxygen = 100
     player.inventory = {}
-    player.deck = {}
-    player.discard = {}
+    player.hand = {}
     player.gold = 0
-    
-    -- Create deck from starting cards
-    for _, cardName in ipairs(startingDeck) do
-        table.insert(player.deck, cardName)
-    end
-    
-    -- Shuffle deck
-    shuffleDeck()
     
     -- Game variables
     currentEnemy = nil
@@ -1499,15 +1479,29 @@ function love.update(dt)
     effectsSettings.dustParticles:update(dt)
     
     -- Update shader variables
-    shaders.exploreBackground:send("iTime", love.timer.getTime())
-    shaders.exploreBackground:send("iResolution", {love.graphics.getWidth(), love.graphics.getHeight()})
-    shaders.fightBackground:send("iTime", love.timer.getTime())
-    shaders.fightBackground:send("iResolution", {love.graphics.getWidth(), love.graphics.getHeight()})
-    shaders.water:send("time", animations.time)
-    shaders.water:send("depth", player.depth)
+    if shaders.exploreBackground:hasUniform("iTime") then
+        shaders.exploreBackground:send("iTime", love.timer.getTime())
+    end
+    if shaders.exploreBackground:hasUniform("iResolution") then
+        shaders.exploreBackground:send("iResolution", {love.graphics.getWidth(), love.graphics.getHeight()})
+    end
+    if shaders.fightBackground:hasUniform("iTime") then
+        shaders.fightBackground:send("iTime", love.timer.getTime())
+    end
+    if shaders.fightBackground:hasUniform("iResolution") then
+        shaders.fightBackground:send("iResolution", {love.graphics.getWidth(), love.graphics.getHeight()})
+    end
+    if shaders.water:hasUniform("time") then
+        shaders.water:send("time", animations.time)
+    end
+    if shaders.water:hasUniform("depth") then
+        shaders.water:send("depth", player.depth)
+    end
     if not shaderTime then shaderTime = 0 end
     shaderTime = shaderTime + dt
-    shaders.lostBackground:send("iTime", shaderTime)
+    if shaders.lostBackground:hasUniform("iTime") then
+        shaders.lostBackground:send("iTime", shaderTime)
+    end
     
     -- Update button animations
     for _, button in pairs(buttons) do
@@ -1633,7 +1627,7 @@ function love.draw()
         }
         love.graphics.setColor(depthColor)
         love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
-        drawMenu()
+        drawMenu()""
     elseif currentState == GAME_STATE.EXPLORE then
         love.graphics.setShader(shaders.exploreBackground)
         love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
@@ -1749,7 +1743,7 @@ function drawCombat()
         
         -- Calculate animation state
         local animState = 0
-        if currentEnemy.animation then
+        if currentEnemy and currentEnemy.animation then
             animState = currentEnemy.animation.timer / currentEnemy.animation.duration
             if currentEnemy.animation.entrance then
                 animState = 1.0 - animState
@@ -1798,7 +1792,7 @@ end
 function drawPlayerStats()
     print("Drawing stats - Health: " .. player.health .. ", Oxygen: " .. player.oxygen .. ", Pressure: " .. player.pressure)
     love.graphics.setColor(0.1, 0.1, 0.2, 0.7)
-    love.graphics.rectangle("fill", 20, 20, 200, 110, 5, 5)
+    love.graphics.rectangle("fill", 20, 20, 200, 90, 5, 5) -- Reduced height since we removed deck/discard line
     
     drawStatusBar(30, 30, 180, player.health, player.maxHealth, {0.8, 0.2, 0.2}, {0.6, 0.1, 0.1}, "HP")
     drawStatusBar(30, 50, 180, player.oxygen, player.maxOxygen, {0.2, 0.6, 0.9}, {0.1, 0.3, 0.7}, "O₂")
@@ -1807,8 +1801,6 @@ function drawPlayerStats()
     love.graphics.setFont(smallFont)
     love.graphics.setColor(0.8, 0.8, 1)
     love.graphics.print(string.format("Depth: %dm", player.depth), 30, 90)
-    love.graphics.setColor(0.7, 0.7, 0.8)
-    love.graphics.print(string.format("Deck: %d   Discard: %d", #player.deck, #player.discard), 30, 110)
 end
 
 function drawStatusBar(x, y, width, value, maxValue, color1, color2, label)
@@ -1914,6 +1906,7 @@ function drawGameOver()
     
     -- Restart button
     drawButton(buttons.restartButton)
+    cleanup()
 end
 
 function drawFloatingNumbers()
