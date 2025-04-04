@@ -912,74 +912,344 @@ function drawPlayerStats()
     love.graphics.print(CURRENCY_NAME .. ": " .. player.currency, 20, 100)
     love.graphics.print("Depth: " .. player.depth .. "m", 20, 120)
     love.graphics.print("Items: " .. #player.inventory .. "/" .. MAX_INVENTORY, 20, 140)
-    love.graphics.print("Oxygen: " .. math.floor(player.oxygen) .. "/" .. MAX_OXYGEN, 20, 160)
-    love.graphics.print("Pressure: " .. math.floor(player.pressure) .. "/" .. MAX_PRESSURE, 20, 180)
+    
+    -- Draw oxygen bar
+    love.graphics.setColor(0.2, 0.2, 0.5)
+    love.graphics.rectangle("fill", GAME_WIDTH - 220, 20, 200, 20)
+    love.graphics.setColor(0.2, 0.6, 1.0)
+    love.graphics.rectangle("fill", GAME_WIDTH - 220, 20, (player.oxygen / MAX_OXYGEN) * 200, 20)
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.rectangle("line", GAME_WIDTH - 220, 20, 200, 20)
+    love.graphics.print("Oxygen: " .. math.floor(player.oxygen) .. "%", GAME_WIDTH - 210, 22)
+    
+    -- Draw pressure bar
+    love.graphics.setColor(0.5, 0.2, 0.2)
+    love.graphics.rectangle("fill", GAME_WIDTH - 220, 50, 200, 20)
+    love.graphics.setColor(1.0, 0.4, 0.4)
+    love.graphics.rectangle("fill", GAME_WIDTH - 220, 50, (player.pressure / MAX_PRESSURE) * 200, 20)
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.rectangle("line", GAME_WIDTH - 220, 50, 200, 20)
+    love.graphics.print("Pressure: " .. math.floor(player.pressure) .. "%", GAME_WIDTH - 210, 52)
 end
 
--- Draw enemy stats
-function drawEnemyStats()
-    if currentEnemy then
-        love.graphics.setFont(fonts.medium)
-        love.graphics.setColor(currentEnemy.color[1], currentEnemy.color[2], currentEnemy.color[3], 1)
-        love.graphics.print(currentEnemy.name .. " - Health: " .. currentEnemy.health .. "/" .. currentEnemy.maxHealth,
-            GAME_WIDTH / 2 - 100, 50)
-        love.graphics.setColor(1, 1, 1, 1)
+-- Draw current enemy
+function drawEnemy()
+    if not currentEnemy then return end
+    
+    -- Calculate position
+    local x, y = GAME_WIDTH / 2, GAME_HEIGHT / 2 - 50
+    
+    -- Animation offsets based on animation state
+    if currentEnemy.animState == 1 then
+        -- Attack animation
+        x = x + math.sin(gameTime * 10) * 10
+    elseif currentEnemy.animState == 2 then
+        -- Hit animation
+        y = y + math.sin(gameTime * 10) * 5
     end
+    
+    love.graphics.setColor(currentEnemy.color)
+    
+    -- Draw enemy based on type
+    if string.find(currentEnemy.name, "Jellyfish") then
+        -- Draw jellyfish
+        love.graphics.circle("fill", x, y, 40)
+        love.graphics.setColor(currentEnemy.color[1] * 1.2, currentEnemy.color[2] * 1.2, currentEnemy.color[3] * 1.2)
+        for i = 1, 8 do
+            local angle = (i / 8) * math.pi * 2
+            local tentacleX = x + math.cos(angle) * 40
+            local tentacleY = y + math.sin(angle) * 40
+            love.graphics.line(tentacleX, tentacleY, tentacleX + math.cos(angle) * 30, tentacleY + math.sin(angle) * 30 + math.sin(gameTime * 3) * 10)
+        end
+    elseif string.find(currentEnemy.name, "Angler") then
+        -- Draw angler fish
+        love.graphics.setColor(currentEnemy.color)
+        love.graphics.polygon("fill", x - 50, y, x + 30, y - 30, x + 30, y + 30)
+        love.graphics.setColor(1, 1, 0.5)
+        love.graphics.circle("fill", x + 40, y - 40, 10)
+    elseif string.find(currentEnemy.name, "Squid") then
+        -- Draw squid
+        love.graphics.setColor(currentEnemy.color)
+        love.graphics.ellipse("fill", x, y, 30, 50)
+        for i = 1, 6 do
+            local angle = (i / 6) * math.pi + math.pi/2
+            local tentacleX = x + math.cos(angle) * 30
+            local tentacleY = y + math.sin(angle) * 50
+            love.graphics.line(tentacleX, tentacleY, 
+                              tentacleX + math.cos(angle) * 40,
+                              tentacleY + math.sin(angle) * 40 + math.sin(gameTime * 2 + i) * 10)
+        end
+    elseif string.find(currentEnemy.name, "Kraken") then
+        -- Draw kraken
+        love.graphics.setColor(currentEnemy.color)
+        love.graphics.ellipse("fill", x, y - 30, 60, 40)
+        for i = 1, 8 do
+            local angle = (i / 8) * math.pi * 2
+            local tentacleX = x + math.cos(angle) * 40
+            local tentacleY = y - 30 + math.sin(angle) * 30
+            local segments = 3
+            local lastX, lastY = tentacleX, tentacleY
+            
+            for j = 1, segments do
+                local nextX = lastX + math.cos(angle + math.sin(gameTime * 2 + i) * 0.2) * 30
+                local nextY = lastY + math.sin(angle + math.sin(gameTime * 2 + i) * 0.2) * 30
+                love.graphics.line(lastX, lastY, nextX, nextY)
+                lastX, lastY = nextX, nextY
+            end
+        end
+    elseif string.find(currentEnemy.name, "Leviathan") then
+        -- Draw leviathan
+        love.graphics.setColor(currentEnemy.color)
+        love.graphics.ellipse("fill", x, y, 80, 50)
+        
+        -- Draw fins
+        love.graphics.polygon("fill", 
+            x - 40, y,
+            x - 80, y - 40,
+            x - 80, y + 40
+        )
+        
+        -- Draw tail
+        love.graphics.polygon("fill",
+            x + 60, y - 10,
+            x + 100, y - 40,
+            x + 100, y + 40,
+            x + 60, y + 10
+        )
+        
+        -- Draw eye
+        love.graphics.setColor(1, 0, 0)
+        love.graphics.circle("fill", x + 50, y - 20, 10)
+    end
+    
+    -- Reset animation state
+    currentEnemy.animState = 0
+    
+    -- Display enemy stats
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.setFont(fonts.medium)
+    love.graphics.printf(currentEnemy.name, x - 100, y - 100, 200, "center")
+    
+    -- Health bar
+    love.graphics.setColor(0.7, 0.2, 0.2)
+    love.graphics.rectangle("fill", x - 50, y + 80, 100, 15)
+    love.graphics.setColor(0.2, 0.7, 0.2)
+    love.graphics.rectangle("fill", x - 50, y + 80, (currentEnemy.health / currentEnemy.maxHealth) * 100, 15)
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.rectangle("line", x - 50, y + 80, 100, 15)
+    love.graphics.setFont(fonts.small)
+    love.graphics.printf(math.floor(currentEnemy.health) .. "/" .. currentEnemy.maxHealth, x - 50, y + 82, 100, "center")
 end
 
--- Draw shop interface
+-- Draw shop items
 function drawShop()
-    love.graphics.setFont(fonts.medium)
-    love.graphics.print("Shop - " .. CURRENCY_NAME .. ": " .. player.currency, GAME_WIDTH / 2 - 50, 20)
+    love.graphics.setFont(fonts.large)
+    love.graphics.printf("Deep Sea Shop", 0, 50, GAME_WIDTH, "center")
     
-    love.graphics.setFont(fonts.small)
+    love.graphics.setFont(fonts.medium)
+    love.graphics.printf(CURRENCY_NAME .. ": " .. player.currency, 0, 100, GAME_WIDTH, "center")
+    
+    local itemsPerRow = 3
+    local itemWidth = 200
+    local itemHeight = 120
+    local startX = (GAME_WIDTH - (itemWidth * itemsPerRow + 20 * (itemsPerRow - 1))) / 2
+    local startY = 150
+    
     for i, item in ipairs(shopInventory) do
-        local y = 60 + (i - 1) * 80
-        love.graphics.setColor(0.2, 0.2, 0.6, 0.8)
-        love.graphics.rectangle("fill", 50, y, GAME_WIDTH - 100, 70)
+        local row = math.floor((i - 1) / itemsPerRow)
+        local col = (i - 1) % itemsPerRow
         
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.print(item.name .. " - " .. item.price .. " " .. CURRENCY_NAME, 60, y + 10)
-        love.graphics.print(item.description, 60, y + 30)
+        local x = startX + col * (itemWidth + 20)
+        local y = startY + row * (itemHeight + 20)
         
-        -- Buy button
-        love.graphics.setColor(0.3, 0.5, 0.8, 0.8)
-        love.graphics.rectangle("fill", GAME_WIDTH - 150, y + 20, 100, 30)
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.print("Buy", GAME_WIDTH - 130, y + 25)
+        -- Check if mouse is hovering
+        local mx, my = love.mouse.getPosition()
+        local hover = mx >= x and mx <= x + itemWidth and
+                     my >= y and my <= y + itemHeight
+                     
+        -- Draw item background
+        if hover then
+            love.graphics.setColor(0.3, 0.5, 0.8, 0.8)
+        else
+            love.graphics.setColor(0.2, 0.3, 0.6, 0.7)
+        end
+        love.graphics.rectangle("fill", x, y, itemWidth, itemHeight, 5, 5)
+        
+        -- Draw item border
+        love.graphics.setColor(0.5, 0.7, 1.0, hover and 1.0 or 0.7)
+        love.graphics.rectangle("line", x, y, itemWidth, itemHeight, 5, 5)
+        
+        -- Draw item info
+        love.graphics.setColor(1, 1, 1)
+        love.graphics.setFont(fonts.medium)
+        love.graphics.printf(item.name, x + 10, y + 10, itemWidth - 20, "center")
+        
+        love.graphics.setFont(fonts.small)
+        love.graphics.printf(item.description, x + 10, y + 40, itemWidth - 20, "center")
+        
+        -- Draw price
+        if player.currency >= item.price then
+            love.graphics.setColor(0.2, 1.0, 0.2)
+        else
+            love.graphics.setColor(1.0, 0.2, 0.2)
+        end
+        love.graphics.printf(item.price .. " " .. CURRENCY_NAME, x + 10, y + itemHeight - 30, itemWidth - 20, "center")
+        
+        -- Draw consumable indicator
+        if item.isConsumable then
+            love.graphics.setColor(1, 1, 0.5)
+            love.graphics.printf("(Consumable)", x + 10, y + itemHeight - 50, itemWidth - 20, "center")
+        end
     end
+    
+    love.graphics.setColor(1, 1, 1)
 end
 
--- Draw inventory interface
+-- Draw inventory
 function drawInventory()
-    love.graphics.setFont(fonts.medium)
-    love.graphics.print("Inventory (" .. #player.inventory .. "/" .. MAX_INVENTORY .. ")", GAME_WIDTH / 2 - 50, 20)
+    love.graphics.setFont(fonts.large)
+    love.graphics.printf("Inventory", 0, 50, GAME_WIDTH, "center")
     
-    love.graphics.setFont(fonts.small)
-    for i, item in ipairs(player.inventory) do
-        local y = 60 + (i - 1) * 80
-        love.graphics.setColor(0.2, 0.2, 0.6, 0.8)
-        love.graphics.rectangle("fill", 50, y, GAME_WIDTH - 100, 70)
-        
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.print(item.name, 60, y + 10)
-        love.graphics.print(item.description, 60, y + 30)
-        
-        -- Use button
-        love.graphics.setColor(0.3, 0.5, 0.8, 0.8)
-        love.graphics.rectangle("fill", GAME_WIDTH - 150, y + 20, 100, 30)
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.print("Use", GAME_WIDTH - 130, y + 25)
+    if #player.inventory == 0 then
+        love.graphics.setFont(fonts.medium)
+        love.graphics.printf("Your inventory is empty", 0, GAME_HEIGHT / 2 - 20, GAME_WIDTH, "center")
+        return
     end
+    
+    local itemsPerRow = 4
+    local itemWidth = 150
+    local itemHeight = 100
+    local startX = (GAME_WIDTH - (itemWidth * itemsPerRow + 20 * (itemsPerRow - 1))) / 2
+    local startY = 150
+    
+    for i, item in ipairs(player.inventory) do
+        local row = math.floor((i - 1) / itemsPerRow)
+        local col = (i - 1) % itemsPerRow
+        
+        local x = startX + col * (itemWidth + 20)
+        local y = startY + row * (itemHeight + 20)
+        
+        -- Check if mouse is hovering
+        local mx, my = love.mouse.getPosition()
+        local hover = mx >= x and mx <= x + itemWidth and
+                     my >= y and my <= y + itemHeight
+                     
+        -- Check if selected
+        local selected = i == selectedInventoryItem
+        
+        -- Draw item background
+        if selected then
+            love.graphics.setColor(0.4, 0.8, 0.4, 0.8)
+        elseif hover then
+            love.graphics.setColor(0.3, 0.5, 0.8, 0.8)
+        else
+            love.graphics.setColor(0.2, 0.3, 0.6, 0.7)
+        end
+        love.graphics.rectangle("fill", x, y, itemWidth, itemHeight, 5, 5)
+        
+        -- Draw item border
+        if selected then
+            love.graphics.setColor(0.5, 1.0, 0.5, 1.0)
+        else
+            love.graphics.setColor(0.5, 0.7, 1.0, hover and 1.0 or 0.7)
+        end
+        love.graphics.rectangle("line", x, y, itemWidth, itemHeight, 5, 5)
+        
+        -- Draw item info
+        love.graphics.setColor(1, 1, 1)
+        love.graphics.setFont(fonts.small)
+        love.graphics.printf(item.name, x + 5, y + 10, itemWidth - 10, "center")
+        
+        love.graphics.setFont(fonts.small)
+        love.graphics.printf(item.description, x + 5, y + 40, itemWidth - 10, "center")
+        
+        -- Draw combat use indicator
+        if item.combatUse then
+            if currentState == GameState.COMBAT then
+                love.graphics.setColor(1, 1, 0.5)
+            else
+                love.graphics.setColor(0.7, 0.7, 0.3)
+            end
+            love.graphics.printf("(Combat Use)", x + 5, y + itemHeight - 25, itemWidth - 10, "center")
+        end
+    end
+    
+    -- Show use button if an item is selected
+    if selectedInventoryItem and player.inventory[selectedInventoryItem] then
+        local buttonX = GAME_WIDTH / 2 - 75
+        local buttonY = GAME_HEIGHT - 120
+        local buttonWidth = 150
+        local buttonHeight = 40
+        
+        local item = player.inventory[selectedInventoryItem]
+        local canUse = (currentState == GameState.COMBAT and item.combatUse) or
+                       (currentState ~= GameState.COMBAT and not item.combatUse)
+        
+        -- Draw button background
+        if canUse then
+            love.graphics.setColor(0.2, 0.7, 0.3, 0.8)
+        else
+            love.graphics.setColor(0.7, 0.3, 0.2, 0.8)
+        end
+        love.graphics.rectangle("fill", buttonX, buttonY, buttonWidth, buttonHeight, 5, 5)
+        
+        -- Draw button border
+        love.graphics.setColor(0.5, 1.0, 0.5, canUse and 1.0 or 0.5)
+        love.graphics.rectangle("line", buttonX, buttonY, buttonWidth, buttonHeight, 5, 5)
+        
+        -- Draw button text
+        love.graphics.setColor(1, 1, 1)
+        love.graphics.setFont(fonts.medium)
+        love.graphics.printf("Use Item", buttonX, buttonY + 10, buttonWidth, "center")
+    end
+    
+    love.graphics.setColor(1, 1, 1)
+end
+
+-- Draw title screen
+function drawTitle()
+    -- Background animation effect
+    love.graphics.setColor(0.1, 0.2, 0.5, 1)
+    love.graphics.rectangle("fill", 0, 0, GAME_WIDTH, GAME_HEIGHT)
+    
+    -- Title text
+    love.graphics.setFont(fonts.title)
+    love.graphics.setColor(0.5, 0.7, 1.0, 1.0)
+    love.graphics.printf("Ocean Depths", 0, GAME_HEIGHT / 4, GAME_WIDTH, "center")
+    
+    -- Subtitle
+    love.graphics.setFont(fonts.medium)
+    love.graphics.setColor(0.7, 0.8, 1.0, 0.8)
+    love.graphics.printf("A Deep Sea Adventure", 0, GAME_HEIGHT / 4 + 60, GAME_WIDTH, "center")
+    
+    love.graphics.setColor(1, 1, 1, 1)
+end
+
+-- Draw game over screen
+function drawGameOver()
+    love.graphics.setColor(0.1, 0.1, 0.2, 1)
+    love.graphics.rectangle("fill", 0, 0, GAME_WIDTH, GAME_HEIGHT)
+    
+    love.graphics.setFont(fonts.title)
+    love.graphics.setColor(1, 0.3, 0.3, 1)
+    love.graphics.printf("Game Over", 0, GAME_HEIGHT / 4, GAME_WIDTH, "center")
+    
+    love.graphics.setFont(fonts.medium)
+    love.graphics.setColor(1, 1, 1, 0.8)
+    love.graphics.printf("You reached a depth of " .. player.maxDepth .. " meters", 0, GAME_HEIGHT / 4 + 100, GAME_WIDTH, "center")
+    
+    love.graphics.setColor(1, 1, 1, 1)
 end
 
 -- Main update function
 function love.update(dt)
     gameTime = gameTime + dt
     
-    -- Update water shader
-    shaders.water:send("time", gameTime)
-    shaders.water:send("depth", player.depth)
+    -- Update shaders
+    if shaders.water then
+        shaders.water:send("time", gameTime)
+        shaders.water:send("depth", player.depth / 1000)
+    end
     
     -- Update bubbles
     updateBubbles(dt)
@@ -987,16 +1257,105 @@ function love.update(dt)
     -- Update buttons
     updateButtons(dt)
     
-    -- Oxygen and pressure mechanics in explore/combat states
-    if currentState == GameState.EXPLORE or currentState == GameState.COMBAT then
+    -- Consume oxygen when exploring
+    if currentState == GameState.EXPLORE then
         consumeOxygen()
     end
     
     -- Update enemy animation
-    if currentEnemy and currentEnemy.animState > 0 then
-        currentEnemy.animState = currentEnemy.animState - dt * 5
-        if currentEnemy.animState < 0 then
-            currentEnemy.animState = 0
+    if currentEnemy then
+        -- Add subtle animation movement
+        currentEnemy.animTime = (currentEnemy.animTime or 0) + dt
+    end
+end
+
+-- Mouse press handler
+function love.mousepressed(x, y, button)
+    if button ~= 1 then return end
+    
+    local currentButtons = {}
+    if currentState == GameState.TITLE then
+        currentButtons = buttons.title
+    elseif currentState == GameState.EXPLORE then
+        currentButtons = buttons.explore
+    elseif currentState == GameState.COMBAT then
+        currentButtons = buttons.combat
+    elseif currentState == GameState.SHOP then
+        currentButtons = buttons.shop
+    elseif currentState == GameState.INVENTORY then
+        currentButtons = buttons.inventory
+    elseif currentState == GameState.GAME_OVER then
+        currentButtons = buttons.gameOver
+    end
+    
+    -- Check button clicks
+    for _, button in ipairs(currentButtons) do
+        if x >= button.x and x <= button.x + button.width and
+           y >= button.y and y <= button.y + button.height then
+            button.action()
+            return
+        end
+    end
+    
+    -- Shop item click
+    if currentState == GameState.SHOP then
+        local itemsPerRow = 3
+        local itemWidth = 200
+        local itemHeight = 120
+        local startX = (GAME_WIDTH - (itemWidth * itemsPerRow + 20 * (itemsPerRow - 1))) / 2
+        local startY = 150
+        
+        for i, _ in ipairs(shopInventory) do
+            local row = math.floor((i - 1) / itemsPerRow)
+            local col = (i - 1) % itemsPerRow
+            
+            local ix = startX + col * (itemWidth + 20)
+            local iy = startY + row * (itemHeight + 20)
+            
+            if x >= ix and x <= ix + itemWidth and
+               y >= iy and y <= iy + itemHeight then
+                buyItem(i)
+                return
+            end
+        end
+    end
+    
+    -- Inventory item click
+    if currentState == GameState.INVENTORY then
+        local itemsPerRow = 4
+        local itemWidth = 150
+        local itemHeight = 100
+        local startX = (GAME_WIDTH - (itemWidth * itemsPerRow + 20 * (itemsPerRow - 1))) / 2
+        local startY = 150
+        
+        -- Check inventory item clicks
+        for i, _ in ipairs(player.inventory) do
+            local row = math.floor((i - 1) / itemsPerRow)
+            local col = (i - 1) % itemsPerRow
+            
+            local ix = startX + col * (itemWidth + 20)
+            local iy = startY + row * (itemHeight + 20)
+            
+            if x >= ix and x <= ix + itemWidth and
+               y >= iy and y <= iy + itemHeight then
+                selectedInventoryItem = i
+                return
+            end
+        end
+        
+        -- Check use button click
+        if selectedInventoryItem and player.inventory[selectedInventoryItem] then
+            local buttonX = GAME_WIDTH / 2 - 75
+            local buttonY = GAME_HEIGHT - 120
+            local buttonWidth = 150
+            local buttonHeight = 40
+            
+            if x >= buttonX and x <= buttonX + buttonWidth and
+               y >= buttonY and y <= buttonY + buttonHeight then
+                useItem(selectedInventoryItem)
+                selectedInventoryItem = nil
+                return
+            end
         end
     end
 end
@@ -1004,116 +1363,50 @@ end
 -- Main draw function
 function love.draw()
     -- Apply water shader
-    love.graphics.setShader(shaders.water)
+    if shaders.water then
+        love.graphics.setShader(shaders.water)
+    end
     
-    -- Draw background gradient based on depth
-    local depthFactor = math.min(1, player.depth / 200)
-    love.graphics.setColor(0.1, 0.2 - depthFactor * 0.15, 0.5 - depthFactor * 0.4)
+    -- Background color based on depth
+    local depthFactor = math.max(0.1, 1 - player.depth / 300)
+    love.graphics.setColor(0.1 * depthFactor, 0.2 * depthFactor, 0.5 * depthFactor)
     love.graphics.rectangle("fill", 0, 0, GAME_WIDTH, GAME_HEIGHT)
     
     -- Draw bubbles
     drawBubbles()
     
-    -- Reset shader for UI elements
+    -- Reset shader
     love.graphics.setShader()
     
-    -- Draw different screens based on game state
+    -- Draw state-specific elements
     if currentState == GameState.TITLE then
-        love.graphics.setFont(fonts.title)
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.print("Ocean Depths", GAME_WIDTH / 2 - 150, GAME_HEIGHT / 2 - 100)
-        drawButtons()
-        
+        drawTitle()
     elseif currentState == GameState.EXPLORE then
+        -- Draw exploration interface
+        love.graphics.setFont(fonts.large)
+        love.graphics.setColor(1, 1, 1, 0.8)
+        love.graphics.printf("Depth: " .. player.depth .. "m", 0, 50, GAME_WIDTH, "center")
         drawPlayerStats()
         drawCombatLog()
-        drawButtons()
-        
     elseif currentState == GameState.COMBAT then
+        -- Draw combat interface
+        drawEnemy()
         drawPlayerStats()
-        drawEnemyStats()
         drawCombatLog()
-        drawButtons()
-        
     elseif currentState == GameState.SHOP then
-        drawPlayerStats()
+        -- Draw shop interface
         drawShop()
-        drawButtons()
-        
-    elseif currentState == GameState.INVENTORY then
         drawPlayerStats()
+        drawCombatLog()
+    elseif currentState == GameState.INVENTORY then
+        -- Draw inventory interface
         drawInventory()
-        drawButtons()
-        
+        drawPlayerStats()
     elseif currentState == GameState.GAME_OVER then
-        love.graphics.setFont(fonts.title)
-        love.graphics.setColor(1, 0, 0, 1)
-        love.graphics.print("Game Over", GAME_WIDTH / 2 - 130, GAME_HEIGHT / 2 - 50)
-        love.graphics.setFont(fonts.medium)
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.print("Max Depth: " .. player.maxDepth .. "m", GAME_WIDTH / 2 - 50, GAME_HEIGHT / 2 + 20)
-        drawButtons()
-    end
-end
-
--- Handle mouse clicks
-function love.mousepressed(x, y, button)
-    if button ~= 1 then return end
-    
-    -- Check button clicks
-    local currentButtons = buttons[currentState == GameState.TITLE and "title" or
-                                 currentState == GameState.EXPLORE and "explore" or
-                                 currentState == GameState.COMBAT and "combat" or
-                                 currentState == GameState.SHOP and "shop" or
-                                 currentState == GameState.INVENTORY and "inventory" or
-                                 currentState == GameState.GAME_OVER and "gameOver"]
-                                 
-    for _, btn in ipairs(currentButtons) do
-        if x >= btn.x and x <= btn.x + btn.width and
-           y >= btn.y and y <= btn.y + btn.height then
-            btn.action()
-            return
-        end
+        -- Draw game over screen
+        drawGameOver()
     end
     
-    -- Shop item purchases
-    if currentState == GameState.SHOP then
-        for i, item in ipairs(shopInventory) do
-            local y = 60 + (i - 1) * 80
-            if x >= GAME_WIDTH - 150 and x <= GAME_WIDTH - 50 and
-               y >= y + 20 and y <= y + 50 then
-                buyItem(i)
-                return
-            end
-        end
-    end
-    
-    -- Inventory item use
-    if currentState == GameState.INVENTORY then
-        for i, item in ipairs(player.inventory) do
-            local y = 60 + (i - 1) * 80
-            if x >= GAME_WIDTH - 150 and x <= GAME_WIDTH - 50 and
-               y >= y + 20 and y <= y + 50 then
-                useItem(i)
-                return
-            end
-        end
-    end
-end
-
--- Handle keyboard input
-function love.keypressed(key)
-    if currentState == GameState.COMBAT then
-        if key == "r" then
-            runFromCombat()
-        end
-    end
-    
-    if key == "escape" then
-        if currentState == GameState.TITLE or currentState == GameState.GAME_OVER then
-            love.event.quit()
-        else
-            currentState = GameState.TITLE
-        end
-    end
+    -- Draw buttons
+    drawButtons()
 end
