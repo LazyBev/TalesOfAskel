@@ -178,8 +178,8 @@ function initializeShop()
             end
         },
         {
-            name = "Max Health Up",
-            description = "Increase max health by 10",
+            name = "Health Boost",
+            description = "Increase max health by 10 + health by 10",
             price = 35,
             isConsumable = false,
             effect = function() 
@@ -615,7 +615,7 @@ function useItem(index)
     local item = player.inventory[index]
     
     -- Check if we're in combat and item is for combat
-    if currentState == GameState.COMBAT and item.combatUse then
+    if (currentState == GameState.INVENTORY or currentState == GameState.COMBAT) and item.combatUse then
         -- Use the item
         local skipEnemyTurn = item.effect()
         
@@ -629,7 +629,7 @@ function useItem(index)
         if not skipEnemyTurn and currentEnemy.health > 0 then
             enemyAttack()
         end
-    elseif currentState ~= GameState.COMBAT and not item.combatUse then
+    elseif (currentState ~= GameState.INVENTORY or currentState ~= GameState.COMBAT) and not item.combatUse then
         -- Use non-combat item outside of combat
         item.effect()
         
@@ -784,7 +784,7 @@ function enemyAttack()
         addToCombatLog("Your Bubble Shield absorbed the attack!")
         player.bubbleShield = nil
         return
-    }
+    end
     
     local damage = math.max(0, currentEnemy.attack - player.defense)
     player.health = math.max(0, player.health - damage)
