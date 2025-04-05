@@ -6,10 +6,8 @@ local GAME_WIDTH = 800
 local GAME_HEIGHT = 600
 local CURRENCY_NAME = "Pearls"
 local MAX_OXYGEN = 100
-local MAX_PRESSURE = 100
-local OXYGEN_DEPLETION_BASE = 0.05
-local PRESSURE_INCREASE = 0.2
 local MAX_INVENTORY = 10
+local OXY_DEPL_MULT = nil
 
 -- Game states
 local GameState = {
@@ -18,11 +16,21 @@ local GameState = {
     COMBAT = 3,
     SHOP = 4,
     GAME_OVER = 5,
-    INVENTORY = 6
+    INVENTORY = 6,
+    PAUSE = 7
+}
+
+-- Combat states
+local CombatState = {
+    ATTACK = 1,
+    COUNTER = 2,
+    USE_ITEM = 3,
+    REFILL_OXYGEN = 4
 }
 
 -- Initialize variables
-local currentState
+local currentGameState
+local currentCombatState
 local player
 local enemies
 local currentEnemy
@@ -31,12 +39,11 @@ local gameTime = 0
 local depthLevel = 1
 local shopItems = {}
 local combatLog = {}
-local bubbles = {}
+
 local buttons = {}
 local shopInventory = {}
 local selectedInventoryItem = nil
 
--- Load game resources
 function love.load()
     math.randomseed(os.time())
     love.graphics.setDefaultFilter("nearest", "nearest")
@@ -46,21 +53,23 @@ function love.load()
         small = love.graphics.newFont(12),
         medium = love.graphics.newFont(18),
         large = love.graphics.newFont(24),
-        title = love.graphics.newFont(48)
+        title = love.graphics.newFont(70)
     }
     
     -- Initialize shaders
     initializeShaders()
     
+    -- Create canvas for CRT effect
+    canvas = love.graphics.newCanvas(GAME_WIDTH, GAME_HEIGHT)
+    canvas:setFilter("nearest", "nearest") -- Keep pixelated look
+    
     -- Initialize game state
-    currentState = GameState.TITLE
+    currentGameState = GameState.TITLE
     initializePlayer()
     initializeEnemies()
     initializeShop()
-    generateBubbles(50)
     createButtons()
     
-    -- Set window title
     love.window.setTitle("Ocean Depths")
 end
 
@@ -77,7 +86,6 @@ function initializePlayer()
         depth = 0,
         maxDepth = 0,
         oxygen = MAX_OXYGEN,
-        pressure = 0,
         inventory = {}
     }
 end
@@ -88,7 +96,7 @@ function initializeEnemies()
         {
             name = "Jellyfish",
             baseHealth = 20,
-            baseAttack = 5,
+            baseAttack = 10,
             baseDefense = 2,
             currency = 10,
             baseColor = {0.3, 0.3, 0.9},
@@ -97,7 +105,7 @@ function initializeEnemies()
         {
             name = "Angler",
             baseHealth = 35,
-            baseAttack = 8,
+            baseAttack = 13,
             baseDefense = 3,
             currency = 15,
             baseColor = {0.8, 0.5, 0.2},
@@ -106,7 +114,7 @@ function initializeEnemies()
         {
             name = "Squid",
             baseHealth = 50,
-            baseAttack = 12,
+            baseAttack = 15,
             baseDefense = 5,
             currency = 25,
             baseColor = {0.6, 0.2, 0.6},
@@ -115,7 +123,7 @@ function initializeEnemies()
         {
             name = "Kraken",
             baseHealth = 100,
-            baseAttack = 18,
+            baseAttack = 20,
             baseDefense = 10,
             currency = 50,
             baseColor = {0.7, 0.1, 0.2},
@@ -124,7 +132,7 @@ function initializeEnemies()
         {
             name = "Leviathan",
             baseHealth = 200,
-            baseAttack = 25,
+            baseAttack = 22,
             baseDefense = 15,
             currency = 100,
             baseColor = {0.2, 0.1, 0.8},
@@ -200,16 +208,6 @@ function initializeShop()
             end
         },
         {
-            name = "Pressure Suit",
-            description = "Reduce pressure buildup by 10%",
-            price = 45,
-            isConsumable = false,
-            effect = function() 
-                PRESSURE_INCREASE = PRESSURE_INCREASE * 0.9
-                addToCombatLog("Your pressure suit improved! Pressure builds up 10% slower.")
-            end
-        },
-        {
             name = "Oxygen Regulator",
             description = "Reduce oxygen consumption by 10%",
             price = 40,
@@ -272,7 +270,7 @@ function initializeShop()
                     addToCombatLog("You defeated the " .. currentEnemy.name .. "!")
                     addToCombatLog("You gained " .. currentEnemy.currency .. " " .. CURRENCY_NAME .. "!")
                     player.currency = player.currency + currentEnemy.currency
-                    currentState = GameState.EXPLORE
+                    currentGameState = GameState.EXPLORE
                     return true -- Skip enemy turn since it's defeated
                 end
                 
@@ -297,19 +295,83 @@ end
 -- Create UI buttons
 function createButtons()
     buttons = {
+        pause = {
+            {
+                text = "Resume",
+                x = GAME_WIDTH / 2 - 100,
+                y = GAME_HEIGHT / 2 - 20,
+                baseWidth = 200,
+                baseHeight = 50,
+                width = 200,
+                height = 50,
+                hover = false,
+                pressed = false,
+                animating = false,
+                animTimer = 0,
+                pulse = 0,
+                action = function()
+                    currentGameState = GameState.COMBAT
+                end
+            },
+            {
+                text = "Run",
+                x = GAME_WIDTH / 2 - 100,
+                y = GAME_HEIGHT / 2 + 55,
+                baseWidth = 200,
+                baseHeight = 50,
+                width = 200,
+                height = 50,
+                hover = false,
+                pressed = false,
+                animating = false,
+                animTimer = 0,
+                pulse = 0,
+                action = function()
+                    currentGameState = GameState.COMBAT
+                    runFromCombat()
+                end
+            }
+        },
         title = {
             {
                 text = "Start Game",
                 x = GAME_WIDTH / 2 - 100,
-                y = GAME_HEIGHT / 2 + 50,
+                y = GAME_HEIGHT / 2 - 20,
+                baseWidth = 200,
+                baseHeight = 50,
                 width = 200,
                 height = 50,
                 hover = false,
+                pressed = false,
+                animating = false,
+                animTimer = 0,
                 pulse = 0,
+                holdable = true,
+                holdDelay = 0.2,
+                holdTimer = 0,         
                 action = function() 
-                    currentState = GameState.EXPLORE
+                    currentGameState = GameState.EXPLORE
                     player.depth = 0
-                    generateRandomEncounter()
+                end
+            },
+            {
+                text = "Quit",
+                x = GAME_WIDTH / 2 - 100,
+                y = GAME_HEIGHT / 2 + 55,
+                baseWidth = 200,
+                baseHeight = 50,
+                width = 200,
+                height = 50,
+                hover = false,
+                pressed = false,
+                animating = false,
+                animTimer = 0,
+                pulse = 0,
+                holdable = true,
+                holdDelay = 0.2,
+                holdTimer = 0,         
+                action = function() 
+                    love.event.quit()
                 end
             }
         },
@@ -317,83 +379,180 @@ function createButtons()
             {
                 text = "Continue Deeper",
                 x = GAME_WIDTH / 2 - 100,
-                y = GAME_HEIGHT - 170,
+                y = GAME_HEIGHT - 400,
+                baseWidth = 200,
+                baseHeight = 50,
                 width = 200,
                 height = 50,
                 hover = false,
+                pressed = false,
+                animating = false,
+                animTimer = 0,
                 pulse = 0,
+                holdable = true,
+                holdDelay = 0.2,
+                holdTimer = 0,         
                 action = function() 
                     player.depth = player.depth + 10
                     if player.depth > player.maxDepth then
                         player.maxDepth = player.depth
                     end
-                    -- Increase pressure as you go deeper
-                    player.pressure = math.min(player.pressure + PRESSURE_INCREASE * (player.depth / 100), MAX_PRESSURE)
                     generateRandomEncounter()
                 end
             },
             {
                 text = "Visit Shop",
                 x = GAME_WIDTH / 2 - 100,
-                y = GAME_HEIGHT - 110,
+                y = GAME_HEIGHT - 320,
+                baseWidth = 200,
+                baseHeight = 50,
                 width = 200,
                 height = 50,
                 hover = false,
+                pressed = false,
+                animating = false,
+                animTimer = 0,
                 pulse = 0,
+                holdable = true,
+                holdDelay = 0.2,
+                holdTimer = 0,         
                 action = function() 
-                    currentState = GameState.SHOP
+                    currentGameState = GameState.SHOP
                     generateShopItems()
                 end
             },
             {
                 text = "Inventory",
                 x = GAME_WIDTH / 2 - 100,
-                y = GAME_HEIGHT - 50,
+                y = GAME_HEIGHT - 240,
+                baseWidth = 200,
+                baseHeight = 50,
                 width = 200,
                 height = 50,
                 hover = false,
+                pressed = false,
+                animating = false,
+                animTimer = 0,
                 pulse = 0,
+                holdable = true,
+                holdDelay = 0.2,
+                holdTimer = 0,         
                 action = function()
-                    currentState = GameState.INVENTORY
+                    currentGameState = GameState.INVENTORY
+                end
+            },
+            {
+                text = "Quit",
+                x = GAME_WIDTH / 2 - 100,
+                y = GAME_HEIGHT - 160,
+                baseWidth = 200,
+                baseHeight = 50,
+                width = 200,
+                height = 50,
+                hover = false,
+                pressed = false,
+                animating = false,
+                animTimer = 0,
+                pulse = 0,
+                holdable = true,
+                holdDelay = 0.2,
+                holdTimer = 0,         
+                action = function()
+                    love.event.quit()
                 end
             }
         },
         combat = {
             {
                 text = "Attack",
-                x = GAME_WIDTH / 4 - 75,
+                x = GAME_WIDTH - 775,
                 y = GAME_HEIGHT - 80,
+                baseWidth = 150,
+                baseHeight = 50,
                 width = 150,
                 height = 50,
                 hover = false,
+                pressed = false,
+                animating = false,
+                animTimer = 0,
                 pulse = 0,
-                action = function() 
+                holdable = true,
+                holdDelay = 0.2,
+                holdTimer = 0,         
+                action = function()
+                    currentCombatState = CombatState.ATTACK
+                    OXY_DEPL_MULT = 1
+                    consumeOxygen()
                     attackEnemy()
                 end
             },
             {
                 text = "Counter",
-                x = GAME_WIDTH / 2 - 75,
+                x = GAME_WIDTH - 575,
                 y = GAME_HEIGHT - 80,
+                baseWidth = 150,
+                baseHeight = 50,
                 width = 150,
                 height = 50,
                 hover = false,
+                pressed = false,
+                animating = false,
+                animTimer = 0,
                 pulse = 0,
-                action = function() 
+                holdable = true,
+                holdDelay = 0.2,
+                holdTimer = 0,         
+                action = function()
+                    currentCombatState = CombatState.COUNTER
+                    OXY_DEPL_MULT = 1
+                    consumeOxygen()
                     counterEnemy()
                 end
             },
             {
                 text = "Use Item",
-                x = 3 * GAME_WIDTH / 4 - 75,
+                x = GAME_WIDTH - 375,
                 y = GAME_HEIGHT - 80,
+                baseWidth = 150,
+                baseHeight = 50,
                 width = 150,
                 height = 50,
                 hover = false,
+                pressed = false,
+                animating = false,
+                animTimer = 0,
                 pulse = 0,
-                action = function() 
-                    currentState = GameState.INVENTORY
+                holdable = true,
+                holdDelay = 0.2,
+                holdTimer = 0,         
+                action = function()
+                    currentCombatState = CombatState.USE_ITEM
+                    OXY_DEPL_MULT = 1
+                    consumeOxygen()
+                    currentGameState = GameState.INVENTORY
                     selectedInventoryItem = nil
+                end
+            },
+            {
+                text = "Refill Oxygen",
+                x = GAME_WIDTH - 175,
+                y = GAME_HEIGHT - 80,
+                baseWidth = 150,
+                baseHeight = 50,
+                width = 150,
+                height = 50,
+                hover = false,
+                pressed = false,
+                animating = false,
+                animTimer = 0,
+                pulse = 0,
+                holdable = true,
+                holdDelay = 0.2,
+                holdTimer = 0,         
+                action = function()
+                    currentCombatState = CombatState.REFILL_OXYGEN
+                    consumeOxygen()
+                    enemyAttack()
                 end
             }
         },
@@ -401,13 +560,47 @@ function createButtons()
             {
                 text = "Return to Depths",
                 x = GAME_WIDTH / 2 - 100,
-                y = GAME_HEIGHT - 60,
+                y = GAME_HEIGHT - 80,
+                baseWidth = 200,
+                baseHeight = 50,
                 width = 200,
                 height = 50,
                 hover = false,
+                pressed = false,
+                animating = false,
+                animTimer = 0,
                 pulse = 0,
+                holdable = true,
+                holdDelay = 0.2,
+                holdTimer = 0,         
                 action = function() 
-                    currentState = GameState.EXPLORE
+                    currentGameState = GameState.EXPLORE
+                end
+            },
+            {
+                text = "Reroll Shop (20 " .. CURRENCY_NAME .. ")",
+                x = GAME_WIDTH / 2 - 100,
+                y = GAME_HEIGHT - 440,
+                baseWidth = 210,
+                baseHeight = 50,
+                width = 210,
+                height = 50,
+                hover = false,
+                pressed = false,
+                animating = false,
+                animTimer = 0,
+                pulse = 0,
+                holdable = true,
+                holdDelay = 0.2,
+                holdTimer = 0,         
+                action = function()
+                    if player.currency >= 20 then
+                        player.currency = player.currency - 20
+                        generateShopItems()
+                        addToCombatLog("Shop items rerolled for 20 " .. CURRENCY_NAME .. "!")
+                    else
+                        addToCombatLog("Not enough " .. CURRENCY_NAME .. " to reroll shop!")
+                    end
                 end
             }
         },
@@ -416,17 +609,25 @@ function createButtons()
                 text = "Return",
                 x = GAME_WIDTH / 2 - 100,
                 y = GAME_HEIGHT - 60,
+                baseWidth = 200,
+                baseHeight = 50,
                 width = 200,
                 height = 50,
                 hover = false,
+                pressed = false,
+                animating = false,
+                animTimer = 0,
                 pulse = 0,
+                holdable = true,
+                holdDelay = 0.2,
+                holdTimer = 0,         
                 action = function() 
-                    if currentState == GameState.INVENTORY then
+                    if currentGameState == GameState.INVENTORY then
                         -- Return to the previous state
-                        if currentEnemy then
-                            currentState = GameState.COMBAT
+                        if currentEnemy and currentEnemy.health ~= 0 then
+                            currentGameState = GameState.COMBAT
                         else
-                            currentState = GameState.EXPLORE
+                            currentGameState = GameState.EXPLORE
                         end
                     end
                 end
@@ -436,17 +637,45 @@ function createButtons()
             {
                 text = "Try Again",
                 x = GAME_WIDTH / 2 - 100,
-                y = GAME_HEIGHT / 2 + 100,
+                y = GAME_HEIGHT / 2 + 25,
+                baseWidth = 200,
+                baseHeight = 50,
                 width = 200,
                 height = 50,
                 hover = false,
+                pressed = false,
+                animating = false,
+                animTimer = 0,
                 pulse = 0,
+                holdable = true,
+                holdDelay = 0.2,
+                holdTimer = 0,         
                 action = function() 
-                    currentState = GameState.TITLE
+                    currentGameState = GameState.TITLE
                     initializePlayer()
                     initializeEnemies()
                     initializeShop()
                     clearCombatLog()
+                end
+            },
+            {
+                text = "Quit",
+                x = GAME_WIDTH / 2 - 100,
+                y = GAME_HEIGHT / 2 + 100,
+                baseWidth = 200,
+                baseHeight = 50,
+                width = 200,
+                height = 50,
+                hover = false,
+                pressed = false,
+                animating = false,
+                animTimer = 0,
+                pulse = 0,
+                holdable = true,
+                holdDelay = 0.2,
+                holdTimer = 0,         
+                action = function() 
+                    love.event.quit()
                 end
             }
         }
@@ -456,107 +685,379 @@ end
 -- Initialize shaders
 function initializeShaders()
     shaders = {
-        water = love.graphics.newShader[[
-            extern number time;
-            extern number depth;
-            
-            vec4 effect(vec4 color, Image texture, vec2 texture_coords, vec2 screen_coords) {
-                vec2 uv = texture_coords;
-                uv.y = uv.y + sin(uv.x * 10.0 + time * 0.5) * 0.01;
-                
-                vec4 pixel = Texel(texture, uv);
-                
-                // Darken based on depth
-                float depthFactor = max(0.4, 1.0 - depth * 0.001);
-                
-                return pixel * color * vec4(depthFactor, depthFactor, depthFactor, 1.0);
-            }
-        ]],
-
         swirl = love.graphics.newShader[[
-            #define PIXEL_SIZE_FAC 700.0
-            #define SPIN_EASE 0.5
-            #define colour_2 vec4(0.0,156./255.,1.,1.0)
-            #define colour_1 vec4(0.85,0.2,0.2,1.0)
-            #define colour_3 vec4(0.0,0.0,0.0,1.0)
-            #define spin_amount 0.7
-            #define contrast 1.5
-            
-            // LÖVE uniform variables
-            uniform vec2 iResolution;
-            uniform float iTime;
-            
-            // Main shader effect function required by LÖVE
+            #define PI 3.14159265359
+            #define BLUE1 1.0
+            #define BLUE2 0.7
+            #define BLUE3 0.4
+            #define SINE1 1.0
+            #define SINE2 1.2
+            #define SINE3 0.5
+            #define MOD1 0.1
+            #define MOD2 0.3
+            #define MOD3 0.2
+
+            extern number iTime;
+            extern number dayOfWeek;
+
             vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords) {
-                vec4 fragColor;
-                // Convert screen coordinates to the format expected by your code
-                vec2 fragCoord = screen_coords;
-                
-                //Convert to UV coords (0-1) and floor for pixel effect
-                float pixel_size = length(iResolution.xy)/PIXEL_SIZE_FAC;
-                vec2 uv = (floor(fragCoord.xy*(1.0/pixel_size))*pixel_size - 0.5*iResolution.xy)/length(iResolution.xy) - vec2(0.0, 0.0);
+                vec2 screenSize = love_ScreenSize.xy;
+                vec2 uv = (screen_coords - 0.5 * screenSize) / length(screenSize);
                 float uv_len = length(uv);
-                //Adding in a center swirl, changes with iTime. Only applies meaningfully if the 'spin amount' is a non-zero number
-                float speed = (iTime*SPIN_EASE*0.1) + 302.2;
-                float new_pixel_angle = (atan(uv.y, uv.x)) + speed - SPIN_EASE*20.*(1.*spin_amount*uv_len + (1. - 1.*spin_amount));
-                vec2 mid = (iResolution.xy/length(iResolution.xy))/2.;
-                uv = (vec2((uv_len * cos(new_pixel_angle) + mid.x), (uv_len * sin(new_pixel_angle) + mid.y)) - mid);
-                //Now add the paint effect to the swirled UV
-                uv *= 30.;
-                speed = iTime*(1.);
-                vec2 uv2 = vec2(uv.x+uv.y);
-                for(int i=0; i < 5; i++) {
-                    uv2 += uv + cos(length(uv));
-                    uv += 0.5*vec2(cos(5.1123314 + 0.353*uv2.y + speed*0.131121),sin(uv2.x - 0.113*speed));
-                    uv -= 1.0*cos(uv.x + uv.y) - 1.0*sin(uv.x*0.711 - uv.y);
-                }
-                //Make the paint amount range from 0 - 2
-                float contrast_mod = (0.25*contrast + 0.5*spin_amount + 1.2);
-                float paint_res = min(2., max(0.,length(uv)*(0.035)*contrast_mod));
-                float c1p = max(0.,1. - contrast_mod*abs(1.-paint_res));
-                float c2p = max(0.,1. - contrast_mod*abs(paint_res));
-                float c3p = 1. - min(1., c1p + c2p);
-                vec4 ret_col = (0.3/contrast)*colour_1 + (1. - 0.3/contrast)*(colour_1*c1p + colour_2*c2p + vec4(c3p*colour_3.rgb, c3p*colour_1.a)) + 0.3*max(c1p*5. - 4., 0.) + 0.4*max(c2p*5. - 4., 0.);
                 
-                return ret_col;
+                float day = mod(dayOfWeek, 7.0);
+                
+                if(day < 1.0) {
+                    float speed = mod(iTime * 0.4, PI * 2.0);
+                    float new_pixel_angle = atan(uv.y, uv.x) + speed - 20.0 * (0.25 * uv_len + 0.75);
+                    vec2 mid = (screenSize / length(screenSize)) / 2.0;
+                    uv = (vec2(uv_len * cos(new_pixel_angle) + mid.x, uv_len * sin(new_pixel_angle) + mid.y) - mid);
+                }
+                else if(day < 2.0) {
+                    float angle = iTime + uv_len * 5.0;
+                    uv = vec2(uv.x * cos(angle) - uv.y * sin(angle),
+                            uv.x * sin(angle) + uv.y * cos(angle));
+                    uv += 0.1 * vec2(sin(uv.y * 15.0 + iTime),
+                                    cos(uv.x * 15.0 + iTime));
+                }
+                else if(day < 3.0) {
+                    uv += 0.05 * vec2(sin(uv.y * 20.0 + iTime),
+                                    cos(uv.x * 20.0 + iTime));
+                }
+                else if(day < 4.0) {
+                    vec2 originalUV = uv;
+                    for (int i = 0; i < 7; i++) {
+                        uv += 0.1 * vec2(sin(uv.y * 10.0 + iTime * 0.5 + float(i)),
+                                        cos(uv.x * 10.0 + iTime * 0.5 + float(i)));
+                        uv *= 1.1;
+                    }
+                    uv = mix(uv, originalUV, 0.5);
+                }
+                else if(day < 5.0) {
+                    float jitter = 0.2 * sin(uv_len * 20.0 - iTime); // Fixed line 49
+                    float a = atan(uv.y, uv.x);
+                    uv += jitter * vec2(cos(a), sin(a));
+                }
+                else if(day < 6.0) {
+                    float n = sin(dot(uv, vec2(12.9898, 78.233)) + iTime * 3.0);
+                    uv += 0.03 * vec2(n, cos(dot(uv, vec2(12.9898, 78.233)) + iTime * 3.0));
+                }
+                else {
+                    uv = fract(uv * 2.0 * (sin(iTime * 0.7 + 0.2) + 2.0) + (iTime * 0.25)) - 0.5;
+                    uv *= 1.5;
+                }
+                
+                vec2 uv_loop = uv * 30.0; // Fixed variable name casing
+                float speed = iTime * 7.0;
+                vec2 uv2 = vec2(uv_loop.x + uv_loop.y);
+
+                for (int i = 0; i < 5; i++) {
+                    uv2 += sin(max(uv_loop.x, uv_loop.y)) + uv_loop;
+                    uv_loop += 0.5 * vec2(
+                        cos(5.1123314 + 0.353 * uv2.y + speed * 0.131121),
+                        sin(uv2.x - 0.113 * speed)
+                    );
+                    uv_loop -= cos(uv_loop.x + uv_loop.y) - sin(uv_loop.x * 0.711 - uv_loop.y);
+                }
+
+                float paint_res = min(2.0, max(0.0, length(uv_loop) * 0.077));
+                float c1p = max(0.0, 1.0 - 2.2 * abs(1.0 - paint_res));
+                float c2p = max(0.0, 1.0 - 2.2 * abs(paint_res));
+                float c3p = 1.0 - min(1.0, c1p + c2p);
+                float light = 0.2 * max(c1p * 5.0 - 4.0, 0.0) + 0.4 * max(c2p * 5.0 - 4.0, 0.0);
+                
+                vec4 blue1 = vec4(0.0, 0.0, BLUE1 + MOD1 * sin(iTime + SINE1), 1.0);
+                vec4 blue2 = vec4(0.0, 0.0, BLUE2 + MOD2 * sin(iTime + SINE2), 1.0);
+                vec4 blue3 = vec4(0.0, 0.0, BLUE3 + MOD3 * sin(iTime + SINE3), 1.0);
+                
+                return (0.3 / 3.5) * blue1
+                    + (1.0 - 0.3 / 3.5) * (blue1 * c1p + blue2 * c2p + vec4(0.0, 0.0, c3p * blue3.b, c3p * blue1.a))
+                    + vec4(0.0, 0.0, light, 0.0);
             }
         ]],
+    
+        titleShader = love.graphics.newShader[[
+            float random(in vec2 st) {
+                return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
+            }
+    
+            float noise(in vec2 st) {
+                vec2 i = floor(st);
+                vec2 f = fract(st);
+    
+                float a = random(i);
+                float b = random(i + vec2(1.0, 0.0));
+                float c = random(i + vec2(0.0, 1.0));
+                float d = random(i + vec2(1.0, 1.0));
+    
+                vec2 u = f * f * (3.0 - 2.0 * f);
+    
+                return mix(a, b, u.x) +
+                    (c - a) * u.y * (1.0 - u.x) +
+                    (d - b) * u.x * u.y;
+            }
+    
+            extern float love_Time;
+    
+            vec4 effect(vec4 color, Image texture, vec2 texture_coords, vec2 screen_coords) {
+                float t = love_Time / 10.;
+                
+                vec2 p = 100. * screen_coords / love_ScreenSize.xy;
+                float y = p.y / 100.;
+                p.y += sin(2. * t);
+                p.x += cos(5. * t);
+                p *= mat2(sin(t / 2.), -cos(t / 2.), cos(t / 2.), sin(t / 2.)) / 8.;
+    
+                vec4 fragColor = vec4(0.0);
+                for (float i = 0.; i < 8.; i++) {
+                    fragColor = cos(p.xxxx * .3) * .5 + .5;
+                    float n = noise(p / 5.);
+                    fragColor *= n;
+                    p.x += sin(p.y + love_Time * .3 + i);
+                    p *= mat2(6, -8, 8, 6) / 8.;
+                }
+    
+                fragColor *= 1. - smoothstep(0., .91, y);
+                fragColor *= vec4(0.2, 0.23, 0.54, 1.0);
+                return fragColor * color;
+            }
+        ]],
+    
+        background = love.graphics.newShader[[
+            #define SPIN_ROTATION -2.0
+            #define SPIN_SPEED 7.0
+            #define OFFSET vec2(0.0)
+            #define COLOUR_1 vec4(0.2, 0.5, 0.9, 1.0)    // Medium vibrant blue
+            #define COLOUR_2 vec4(0.3, 0.7, 1.0, 1.0)    // Lighter cyan-blue
+            #define COLOUR_3 vec4(0.1, 0.3, 0.7, 1.0)    // Darker rich blue
+            #define CONTRAST 3.5
+            #define LIGTHING 0.4
+            #define SPIN_AMOUNT 0.25
+            #define PIXEL_FILTER 745.0
+            #define SPIN_EASE 1.0
+            #define PI 3.14159265359
+            #define IS_ROTATE false
+
+            extern number iTime;
+
+            vec4 effect(vec4 color, Image texture, vec2 texture_coords, vec2 screen_coords) {
+                vec2 screenSize = love_ScreenSize.xy;
+                float pixel_size = length(screenSize.xy) / PIXEL_FILTER;
+                vec2 uv = (floor(screen_coords.xy * (1.0 / pixel_size)) * pixel_size - 0.5 * screenSize.xy) / length(screenSize.xy) - OFFSET;
+                float uv_len = length(uv);
+                
+                float speed = (SPIN_ROTATION * SPIN_EASE * 0.2);
+                if (IS_ROTATE) {
+                    speed = iTime * speed;
+                }
+                speed += 302.2;
+                float new_pixel_angle = atan(uv.y, uv.x) + speed - SPIN_EASE * 20.0 * (1.0 * SPIN_AMOUNT * uv_len + (1.0 - 1.0 * SPIN_AMOUNT));
+                vec2 mid = (screenSize.xy / length(screenSize.xy)) / 2.0;
+                uv = (vec2((uv_len * cos(new_pixel_angle) + mid.x), (uv_len * sin(new_pixel_angle) + mid.y)) - mid);
+                
+                uv *= 30.0;
+                speed = iTime * (SPIN_SPEED);
+                vec2 uv2 = vec2(uv.x + uv.y);
+                
+                for (int i = 0; i < 5; i++) {
+                    uv2 += sin(max(uv.x, uv.y)) + uv;
+                    uv += 0.5 * vec2(cos(5.1123314 + 0.353 * uv2.y + speed * 0.131121), sin(uv2.x - 0.113 * speed));
+                    uv -= 1.0 * cos(uv.x + uv.y) - 1.0 * sin(uv.x * 0.711 - uv.y);
+                }
+                
+                float contrast_mod = (0.25 * CONTRAST + 0.5 * SPIN_AMOUNT + 1.2);
+                float paint_res = min(2.0, max(0.0, length(uv) * (0.035) * contrast_mod));
+                float c1p = max(0.0, 1.0 - contrast_mod * abs(1.0 - paint_res));
+                float c2p = max(0.0, 1.0 - contrast_mod * abs(paint_res));
+                float c3p = 1.0 - min(1.0, c1p + c2p);
+                float light = (LIGTHING - 0.2) * max(c1p * 5.0 - 4.0, 0.0) + LIGTHING * max(c2p * 5.0 - 4.0, 0.0);
+                return (0.3 / CONTRAST) * COLOUR_1 + (1.0 - 0.3 / CONTRAST) * (COLOUR_1 * c1p + COLOUR_2 * c2p + vec4(c3p * COLOUR_3.rgb, c3p * COLOUR_1.a)) + light;
+            }
+        ]],
+
+        fight = love.graphics.newShader[[
+            #define SPIN_ROTATION -2.0
+            #define SPIN_SPEED 7.0
+            #define OFFSET vec2(0.0)
+            #define COLOUR_1 vec4(0.05, 0.15, 0.35, 1.0)  // Dark deep ocean blue
+            #define COLOUR_2 vec4(0.1, 0.25, 0.5, 1.0)    // Slightly lighter deep blue
+            #define COLOUR_3 vec4(0.03, 0.1, 0.25, 1.0)   // Even darker blue for depth
+            #define CONTRAST 3.5
+            #define LIGHTING 0.4
+            #define SPIN_AMOUNT 0.25
+            #define PIXEL_FILTER 745.0
+            #define SPIN_EASE 1.0
+            #define PI 3.14159265359
+            #define IS_ROTATE true
+
+            extern float iTime;
+
+            float hash1D(vec2 x)
+            {
+                vec2 q = floor(x * 65536.0);
+                vec2 q_shifted = floor(q / 2.0);
+                vec2 q_mixed = mod(q_shifted + q.yx, 65536.0);
+                q = mod(1103515245.0 * q_mixed, 65536.0);
+                float n = mod(1103515245.0 * (q.x + floor(q.y / 8.0)), 65536.0);
+                return n / 65536.0;
+            }
+
+            float noise(vec2 uv)
+            {
+                vec2 i = floor(uv);
+                vec2 f = fract(uv);
+                float a = hash1D(i);
+                float b = hash1D(i + vec2(1.0, 0.0));
+                float c = hash1D(i + vec2(0.0, 1.0));
+                float d = hash1D(i + vec2(1.0, 1.0));
+                vec2 u = f * f * (3.0 - 2.0 * f);
+                return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+            }
+
+            vec4 effect(vec4 color, Image texture, vec2 texture_coords, vec2 screen_coords)
+            {
+                vec2 screenSize = love_ScreenSize.xy;
+                float pixel_size = length(screenSize.xy) / PIXEL_FILTER;
+                vec2 uv = (floor(screen_coords.xy * (1.0 / pixel_size)) * pixel_size - 0.5 * screenSize.xy) / length(screenSize.xy) - OFFSET;
+                float uv_len = length(uv);
+                
+                float speed = (SPIN_ROTATION * SPIN_EASE * 0.2);
+                if (IS_ROTATE) {
+                    speed = iTime * speed;
+                }
+                speed += 302.2;
+                float new_pixel_angle = atan(uv.y, uv.x) + speed - SPIN_EASE * 20.0 * (1.0 * SPIN_AMOUNT * uv_len + (1.0 - 1.0 * SPIN_AMOUNT));
+                vec2 mid = (screenSize.xy / length(screenSize.xy)) / 2.0;
+                uv = vec2(uv_len * cos(new_pixel_angle) + mid.x, uv_len * sin(new_pixel_angle) + mid.y) - mid;
+                
+                uv *= 30.0;
+                speed = iTime * SPIN_SPEED;
+                vec2 uv2 = vec2(uv.x + uv.y);
+                
+                for (int i = 0; i < 5; i++) {
+                    uv2 += sin(max(uv.x, uv.y)) + uv;
+                    uv += 0.5 * vec2(cos(5.1123314 + 0.353 * uv2.y + speed * 0.131121), sin(uv2.x - 0.113 * speed));
+                    uv -= 1.0 * cos(uv.x + uv.y) - 1.0 * sin(uv.x * 0.711 - uv.y);
+                }
+                
+                float contrast_mod = (0.25 * CONTRAST + 0.5 * SPIN_AMOUNT + 1.2);
+                float paint_res = min(2.0, max(0.0, length(uv) * 0.035 * contrast_mod));
+                float c1p = max(0.0, 1.0 - contrast_mod * abs(1.0 - paint_res));
+                float c2p = max(0.0, 1.0 - contrast_mod * abs(paint_res));
+                float c3p = 1.0 - min(1.0, c1p + c2p);
+                float light = (LIGHTING - 0.2) * max(c1p * 5.0 - 4.0, 0.0) + LIGHTING * max(c2p * 5.0 - 4.0, 0.0);
+                
+                vec4 fragColor = (0.3 / CONTRAST) * COLOUR_1 + (1.0 - 0.3 / CONTRAST) * (COLOUR_1 * c1p + COLOUR_2 * c2p + vec4(c3p * COLOUR_3.rgb, c3p * COLOUR_1.a)) + light;
+                
+                // Add subtle noise overlay for texture
+                float noise_val = noise(uv * 10.0 + iTime * 0.1);
+                fragColor.rgb += vec3(0.02, 0.04, 0.06) * noise_val;
+                
+                return fragColor * color;
+            }
+        ]],
+
+        crt = love.graphics.newShader[[
+            extern number time; // For flicker and noise animation
+            extern vec2 resolution; // Screen resolution
+
+            // Noise function for subtle interference
+            float noise(vec2 p) {
+                return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+            }
+
+            vec4 effect(vec4 color, Image texture, vec2 texture_coords, vec2 screen_coords) {
+                vec2 uv = screen_coords / resolution;
+
+                // Screen curvature (barrel distortion)
+                vec2 center = vec2(0.5, 0.5);
+                vec2 offset = uv - center;
+                float dist = length(offset);
+                float curvature = 0.007; // Adjust curvature strength
+                uv = center + offset * (1.0 + curvature * dist * dist);
+
+                // Clamp UVs to avoid sampling outside texture
+                if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+                    return vec4(0.0, 0.0, 0.0, 1.0); // Black outside screen
+                }
+
+                // Sample texture with slight RGB separation
+                vec4 texColor;
+                float offsetAmount = 0.002; // Adjust for phosphor separation
+                texColor.r = Texel(texture, uv + vec2(offsetAmount, 0.0)).r;
+                texColor.g = Texel(texture, uv).g;
+                texColor.b = Texel(texture, uv - vec2(offsetAmount, 0.0)).b;
+                texColor.a = 1.0;
+
+                // Scanlines
+                float scanline = sin(uv.y * resolution.y * 1.5) * 0.05; // Adjust frequency and intensity
+                texColor.rgb -= scanline;
+
+                // Noise/flicker
+                float noiseVal = noise(screen_coords + vec2(time * 10.0, 0.0)) * 0.03; // Subtle noise
+                texColor.rgb += noiseVal;
+
+                // Vignette effect
+                float vignette = smoothstep(0.9, 0.2, dist);
+                texColor.rgb *= vignette;
+
+                return texColor * color;
+            }
+        ]],
+
+        lost = love.graphics.newShader[[
+            extern number time;
+            extern vec2 resolution;
+
+            float random (in vec2 st) {
+                return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
+            }
+
+            float noise (in vec2 st) {
+                vec2 i = floor(st);
+                vec2 f = fract(st);
+                float a = random(i);
+                float b = random(i + vec2(1.0, 0.0));
+                float c = random(i + vec2(0.0, 1.0));
+                float d = random(i + vec2(1.0, 1.0));
+                vec2 u = f * f * (3.0 - 2.0 * f);
+                return mix(a, b, u.x) +
+                       (c - a) * u.y * (1.0 - u.x) +
+                       (d - b) * u.x * u.y;
+            }
+
+            vec4 effect(vec4 color, Image texture, vec2 texture_coords, vec2 screen_coords) {
+                float t = time / 10.0;
+                vec2 p = 100.0 * screen_coords / resolution;
+                float y = p.y / 100.0;
+                p.y += sin(2.0 * t);
+                p.x += cos(5.0 * t);
+                p *= mat2(sin(t / 2.0), -cos(t / 2.0), cos(t / 2.0), sin(t / 2.0)) / 8.0;
+
+                vec4 fragColor = vec4(0.0);
+                for (float i = 0.0; i < 8.0; i += 1.0) {
+                    fragColor = cos(p.xxxx * 0.3) * 0.5 + 0.5;
+                    float n = noise(p / 5.0);
+                    fragColor *= n;
+                    p.x += sin(p.y + time * 0.3 + i);
+                    p *= mat2(6.0, -8.0, 8.0, 6.0) / 8.0;
+                }
+
+                fragColor *= 1.0 - smoothstep(0.0, 0.91, y);
+                fragColor *= vec4(0.2, 0.23, 0.54, 1.0);
+                return fragColor * color;
+            }
+        ]],
+        
     }
-end
-
--- Generate random bubbles
-function generateBubbles(count)
-    bubbles = {}
-    for i = 1, count do
-        table.insert(bubbles, {
-            x = math.random(0, GAME_WIDTH),
-            y = math.random(0, GAME_HEIGHT),
-            radius = math.random(2, 10),
-            speed = math.random(10, 50) / 100,
-            alpha = math.random(3, 8) / 10
-        })
-    end
-end
-
--- Update bubbles
-function updateBubbles(dt)
-    for i, bubble in ipairs(bubbles) do
-        bubble.y = bubble.y - bubble.speed * dt * 60
-        if bubble.y + bubble.radius < 0 then
-            bubble.y = GAME_HEIGHT + bubble.radius
-            bubble.x = math.random(0, GAME_WIDTH)
-        end
-    end
-end
-
--- Draw bubbles
-function drawBubbles()
-    love.graphics.setColor(1, 1, 1, 0.5)
-    for _, bubble in ipairs(bubbles) do
-        love.graphics.setColor(1, 1, 1, bubble.alpha)
-        love.graphics.circle("line", bubble.x, bubble.y, bubble.radius)
-    end
-    love.graphics.setColor(1, 1, 1, 1)
+    shaders.swirl:send("iTime", 0.0)
+    shaders.swirl:send("dayOfWeek", 0.0)
+    shaders.background:send("iTime", 0.0)
+    shaders.fight:send("iTime", 0.0)
+    shaders.crt:send("time", 0.0)
+    shaders.crt:send("resolution", {GAME_WIDTH, GAME_HEIGHT})
+    shaders.lost:send("time", 0.0)
+    shaders.lost:send("resolution", {GAME_WIDTH, GAME_HEIGHT})
 end
 
 -- Add item to combat log
@@ -606,7 +1107,7 @@ function generateRandomEncounter()
         stunned = false -- For stun bomb item
     }
     
-    currentState = GameState.COMBAT
+    currentGameState = GameState.COMBAT
     addToCombatLog("You encountered a " .. currentEnemy.name .. "!")
 end
 
@@ -664,7 +1165,7 @@ function useItem(index)
     local item = player.inventory[index]
     
     -- Check if we're in combat and item is for combat
-    if (currentState == GameState.INVENTORY or currentState == GameState.COMBAT) and item.combatUse then
+    if (currentGameState == GameState.INVENTORY or currentGameState == GameState.COMBAT) and item.combatUse then
         -- Use the item
         local skipEnemyTurn = item.effect()
         
@@ -672,13 +1173,9 @@ function useItem(index)
         table.remove(player.inventory, index)
         
         -- Return to combat
-        currentState = GameState.COMBAT
+        currentGameState = GameState.COMBAT
         
-        -- If the item doesn't skip the enemy turn, let the enemy attack
-        if not skipEnemyTurn and currentEnemy.health > 0 then
-            enemyAttack()
-        end
-    elseif (currentState ~= GameState.INVENTORY or currentState ~= GameState.COMBAT) and not item.combatUse then
+    elseif (currentGameState ~= GameState.INVENTORY or currentGameState ~= GameState.COMBAT) and not item.combatUse then
         -- Use non-combat item outside of combat
         item.effect()
         
@@ -686,10 +1183,10 @@ function useItem(index)
         table.remove(player.inventory, index)
         
         -- Return to explore mode
-        currentState = GameState.EXPLORE
+        currentGameState = GameState.EXPLORE
     else
         -- Cannot use this item in current context
-        if currentState == GameState.COMBAT then
+        if currentGameState == GameState.COMBAT then
             addToCombatLog("This item cannot be used in combat!")
         else
             addToCombatLog("This item can only be used in combat!")
@@ -736,7 +1233,7 @@ function attackEnemy()
             addToCombatLog("You defeated the " .. currentEnemy.name .. "!")
             addToCombatLog("You gained " .. currentEnemy.currency .. " " .. CURRENCY_NAME .. "!")
             player.currency = player.currency + currentEnemy.currency
-            currentState = GameState.EXPLORE
+            currentGameState = GameState.EXPLORE
             return
         end
     else
@@ -772,7 +1269,7 @@ function counterEnemy()
             addToCombatLog("You defeated the " .. currentEnemy.name .. "!")
             addToCombatLog("You gained " .. currentEnemy.currency .. " " .. CURRENCY_NAME .. "!")
             player.currency = player.currency + currentEnemy.currency
-            currentState = GameState.EXPLORE
+            currentGameState = GameState.EXPLORE
             return
         end
     else
@@ -801,7 +1298,7 @@ function runFromCombat()
     if math.random(100) <= runChance then
         -- Successful run
         addToCombatLog("You successfully fled from the " .. currentEnemy.name .. "!")
-        currentState = GameState.EXPLORE
+        currentGameState = GameState.EXPLORE
     else
         -- Failed run, enemy attacks
         addToCombatLog("You failed to run away!")
@@ -839,43 +1336,50 @@ end
 function checkPlayerStatus()
     if player.health <= 0 then
         addToCombatLog("You were defeated!")
-        currentState = GameState.GAME_OVER
+        currentGameState = GameState.GAME_OVER
     end
     
     if player.oxygen <= 0 then
         addToCombatLog("You ran out of oxygen!")
-        currentState = GameState.GAME_OVER
+        currentGameState = GameState.GAME_OVER
     end
 end
 
--- Consume oxygen based on depth and pressure
+-- Consume oxygen based on depth
 function consumeOxygen()
-    -- More pressure means faster oxygen consumption
-    local pressureFactor = 1 + (player.pressure / 50)
-    player.oxygen = math.max(0, player.oxygen - OXYGEN_DEPLETION_BASE * pressureFactor)
-    
+    if currentCombatState == CombatState.REFILL_OXYGEN then
+        player.oxygen = math.min(MAX_OXYGEN, player.oxygen + 15)
+    end
+
+    if currentCombatState ~= nil and currentCombatState ~= CombatState.REFILL_OXYGEN then
+        player.oxygen = math.max(0, player.oxygen - (1.5 * OXY_DEPL_MULT))
+    end
+
     if player.oxygen <= 0 then
         checkPlayerStatus()
     end
+
+    currentCombatState = nil
 end
 
--- Update button states
 function updateButtons(dt)
     local mx, my = love.mouse.getPosition()
     
     local currentButtons = {}
-    if currentState == GameState.TITLE then
+    if currentGameState == GameState.TITLE then
         currentButtons = buttons.title
-    elseif currentState == GameState.EXPLORE then
+    elseif currentGameState == GameState.EXPLORE then
         currentButtons = buttons.explore
-    elseif currentState == GameState.COMBAT then
+    elseif currentGameState == GameState.COMBAT then
         currentButtons = buttons.combat
-    elseif currentState == GameState.SHOP then
+    elseif currentGameState == GameState.SHOP then
         currentButtons = buttons.shop
-    elseif currentState == GameState.INVENTORY then
+    elseif currentGameState == GameState.INVENTORY then
         currentButtons = buttons.inventory
-    elseif currentState == GameState.GAME_OVER then
+    elseif currentGameState == GameState.GAME_OVER then
         currentButtons = buttons.gameOver
+    elseif currentGameState == GameState.PAUSE then
+        currentButtons = buttons.pause
     end
     
     for _, button in ipairs(currentButtons) do
@@ -890,45 +1394,35 @@ function updateButtons(dt)
         else
             button.pulse = 0
         end
-    end
-end
-
--- Draw buttons
-function drawButtons()
-    local currentButtons = {}
-    if currentState == GameState.TITLE then
-        currentButtons = buttons.title
-    elseif currentState == GameState.EXPLORE then
-        currentButtons = buttons.explore
-    elseif currentState == GameState.COMBAT then
-        currentButtons = buttons.combat
-    elseif currentState == GameState.SHOP then
-        currentButtons = buttons.shop
-    elseif currentState == GameState.INVENTORY then
-        currentButtons = buttons.inventory
-    elseif currentState == GameState.GAME_OVER then
-        currentButtons = buttons.gameOver
-    end
-    
-    for _, button in ipairs(currentButtons) do
-        -- Button background
-        love.graphics.setColor(0.2, 0.3, 0.7, button.hover and 0.9 or 0.7)
-        love.graphics.rectangle("fill", button.x, button.y, button.width, button.height, 5, 5)
         
-        -- Button outline
-        love.graphics.setColor(0.5, 0.7, 1.0, 0.8 + button.pulse * 0.2)
-        love.graphics.rectangle("line", button.x, button.y, button.width, button.height, 5, 5)
+        local targetWidth = button.baseWidth
+        local targetHeight = button.baseHeight
+        if button.pressed then
+            targetWidth = button.baseWidth * 0.9
+            targetHeight = button.baseHeight * 0.9
+        end
         
-        -- Button text
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.setFont(fonts.medium)
-        local textWidth = fonts.medium:getWidth(button.text)
-        local textHeight = fonts.medium:getHeight()
-        love.graphics.print(button.text, button.x + button.width / 2 - textWidth / 2,
-                           button.y + button.height / 2 - textHeight / 2)
+        button.width = button.width + (targetWidth - button.width) * dt * 10
+        button.height = button.height + (targetHeight - button.height) * dt * 10
+        
+        if button.animating then
+            button.animTimer = button.animTimer + dt
+            if button.animTimer >= 0.1 then
+                button.animTimer = 0
+                button.animating = false -- Reset animation after completion
+            end
+        end
+        
+        -- Handle holdable buttons
+        if button.holdable and button.pressed then
+            button.holdTimer = button.holdTimer + dt
+            if button.holdTimer >= button.holdDelay then
+                button.holdTimer = 0
+            end
+        else
+            button.holdTimer = 0
+        end
     end
-    
-    love.graphics.setColor(1, 1, 1, 1)
 end
 
 -- Draw combat log
@@ -963,13 +1457,61 @@ function drawPlayerStats()
     love.graphics.print("Oxygen: " .. math.floor(player.oxygen) .. "%", GAME_WIDTH - 210, 22)
     
     -- Draw pressure bar
-    love.graphics.setColor(0.5, 0.2, 0.2)
+    --[[love.graphics.setColor(0.5, 0.2, 0.2)
     love.graphics.rectangle("fill", GAME_WIDTH - 220, 50, 200, 20)
     love.graphics.setColor(1.0, 0.4, 0.4)
     love.graphics.rectangle("fill", GAME_WIDTH - 220, 50, (player.pressure / MAX_PRESSURE) * 200, 20)
     love.graphics.setColor(1, 1, 1)
     love.graphics.rectangle("line", GAME_WIDTH - 220, 50, 200, 20)
     love.graphics.print("Pressure: " .. math.floor(player.pressure) .. "%", GAME_WIDTH - 210, 52)
+    ]]
+end
+
+-- Draw buttons (new function)
+function drawButtons()
+    local currentButtons = {}
+    if currentGameState == GameState.TITLE then
+        currentButtons = buttons.title
+    elseif currentGameState == GameState.EXPLORE then
+        currentButtons = buttons.explore
+    elseif currentGameState == GameState.COMBAT then
+        currentButtons = buttons.combat
+    elseif currentGameState == GameState.SHOP then
+        currentButtons = buttons.shop
+    elseif currentGameState == GameState.INVENTORY then
+        currentButtons = buttons.inventory
+    elseif currentGameState == GameState.GAME_OVER then
+        currentButtons = buttons.gameOver
+    elseif currentGameState == GameState.PAUSE then
+        currentButtons = buttons.pause
+    end
+    
+    for _, button in ipairs(currentButtons) do
+        -- Button background color
+        if button.pressed then
+            love.graphics.setColor(0.3, 0.5, 0.8, 0.8)  -- Pressed state
+        elseif button.hover then
+            love.graphics.setColor(0.2, 0.4, 0.7, 0.8)  -- Hover state
+        else
+            love.graphics.setColor(0.2, 0.3, 0.6, 0.7)  -- Normal state
+        end
+        love.graphics.rectangle("fill", button.x, button.y, button.width, button.height, 5, 5)
+        
+        -- Button border
+        love.graphics.setColor(0.5, 0.7, 1.0, button.hover and 1.0 or 0.7)
+        love.graphics.rectangle("line", button.x, button.y, button.width, button.height, 5, 5)
+        
+        -- Button text
+        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.setFont(fonts.medium)
+        local textWidth = fonts.medium:getWidth(button.text)
+        local textHeight = fonts.medium:getHeight()
+        love.graphics.print(button.text, 
+            button.x + (button.width - textWidth) / 2, 
+            button.y + (button.height - textHeight) / 2)
+    end
+    
+    love.graphics.setColor(1, 1, 1, 1)  -- Reset color
 end
 
 -- Draw current enemy
@@ -1084,23 +1626,25 @@ end
 -- Draw shop items
 function drawShop()
     love.graphics.setFont(fonts.large)
-    love.graphics.printf("Deep Sea Shop", 0, 50, GAME_WIDTH, "center")
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.printf("Deep Sea Shop", 0, 70, GAME_WIDTH, "center")
     
     love.graphics.setFont(fonts.medium)
-    love.graphics.printf(CURRENCY_NAME .. ": " .. player.currency, 0, 100, GAME_WIDTH, "center")
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.printf(CURRENCY_NAME .. ": " .. player.currency, 0, 120, GAME_WIDTH, "center")
     
     local itemsPerRow = 3
     local itemWidth = 200
     local itemHeight = 120
     local startX = (GAME_WIDTH - (itemWidth * itemsPerRow + 20 * (itemsPerRow - 1))) / 2
-    local startY = 150
+    local startY = GAME_HEIGHT - 370
     
     for i, item in ipairs(shopInventory) do
         local row = math.floor((i - 1) / itemsPerRow)
         local col = (i - 1) % itemsPerRow
         
-        local x = startX + col * (itemWidth + 20)
-        local y = startY + row * (itemHeight + 20)
+        local x = startX + col * (itemWidth + 20) + 10
+        local y = startY + row * (itemHeight + 20) + 5
         
         -- Check if mouse is hovering
         local mx, my = love.mouse.getPosition()
@@ -1148,10 +1692,12 @@ end
 -- Draw inventory
 function drawInventory()
     love.graphics.setFont(fonts.large)
+    love.graphics.setColor(1, 1, 1, 1)
     love.graphics.printf("Inventory", 0, 50, GAME_WIDTH, "center")
     
     if #player.inventory == 0 then
         love.graphics.setFont(fonts.medium)
+        love.graphics.setColor(1, 1, 1, 1)
         love.graphics.printf("Your inventory is empty", 0, GAME_HEIGHT / 2 - 20, GAME_WIDTH, "center")
         return
     end
@@ -1205,7 +1751,7 @@ function drawInventory()
         
         -- Draw combat use indicator
         if item.combatUse then
-            if currentState == GameState.COMBAT then
+            if currentGameState == GameState.COMBAT then
                 love.graphics.setColor(1, 1, 0.5)
             else
                 love.graphics.setColor(0.7, 0.7, 0.3)
@@ -1222,8 +1768,8 @@ function drawInventory()
         local buttonHeight = 40
         
         local item = player.inventory[selectedInventoryItem]
-        local canUse = (currentState == GameState.COMBAT and item.combatUse) or
-                       (currentState ~= GameState.COMBAT and not item.combatUse)
+        local canUse = (currentGameState == GameState.COMBAT and item.combatUse) or
+                       (currentGameState ~= GameState.COMBAT and not item.combatUse)
         
         -- Draw button background
         if canUse then
@@ -1248,28 +1794,21 @@ end
 
 -- Draw title screen
 function drawTitle()
-    -- Background animation effect
-    love.graphics.setColor(0.1, 0.2, 0.5, 1)
-    love.graphics.rectangle("fill", 0, 0, GAME_WIDTH, GAME_HEIGHT)
-    
     -- Title text
     love.graphics.setFont(fonts.title)
     love.graphics.setColor(0.5, 0.7, 1.0, 1.0)
-    love.graphics.printf("Ocean Depths", 0, GAME_HEIGHT / 4, GAME_WIDTH, "center")
+    love.graphics.printf("Ocean Depths", 0, GAME_HEIGHT / 7, GAME_WIDTH, "center")
     
     -- Subtitle
     love.graphics.setFont(fonts.medium)
     love.graphics.setColor(0.7, 0.8, 1.0, 0.8)
-    love.graphics.printf("A Deep Sea Adventure", 0, GAME_HEIGHT / 4 + 60, GAME_WIDTH, "center")
+    love.graphics.printf("A Deep Sea Adventure", 0, GAME_HEIGHT / 6 + 70, GAME_WIDTH, "center")
     
     love.graphics.setColor(1, 1, 1, 1)
 end
 
 -- Draw game over screen
 function drawGameOver()
-    love.graphics.setColor(0.1, 0.1, 0.2, 1)
-    love.graphics.rectangle("fill", 0, 0, GAME_WIDTH, GAME_HEIGHT)
-    
     love.graphics.setFont(fonts.title)
     love.graphics.setColor(1, 0.3, 0.3, 1)
     love.graphics.printf("Game Over", 0, GAME_HEIGHT / 4, GAME_WIDTH, "center")
@@ -1281,74 +1820,119 @@ function drawGameOver()
     love.graphics.setColor(1, 1, 1, 1)
 end
 
+local lastGameTime = 0
+
 -- Main update function
 function love.update(dt)
-    gameTime = gameTime + dt
+    day = tonumber(os.date("%w"))
     
-    -- Update shaders
-    if shaders.water then
-        shaders.water:send("time", gameTime)
-        shaders.water:send("depth", player.depth / 1000)
+    -- Only update if not paused
+    if currentGameState ~= GameState.PAUSE then
+        gameTime = gameTime + dt
+        
+        -- Update shaders
+        if shaders.water then
+            shaders.water:send("time", gameTime)
+            shaders.water:send("depth", player.depth / 1000)
+        end
+        if shaders.swirl then
+            shaders.swirl:send("iTime", gameTime)
+            shaders.swirl:send("dayOfWeek", day)
+        end
+        if shaders.titleShader then
+            shaders.titleShader:send("love_Time", love.timer.getTime())
+        end
+        if shaders.background then
+            shaders.background:send("iTime", gameTime)
+        end
+        if shaders.fight then
+            shaders.fight:send("iTime", gameTime)
+        end
+        if shaders.crt then
+            shaders.crt:send("time", gameTime)
+        end
+        if shaders.lost then
+            shaders.lost:send("time", gameTime)
+        end
+        
+        updateButtons(dt)
+        if currentGameState == GameState.COMBAT then
+            consumeOxygen()
+        end
+        if currentEnemy then
+            currentEnemy.animTime = (currentEnemy.animTime or 0) + dt
+        end
+    else
+        -- When paused, use the last game time for shaders to freeze them
+        if shaders.water then
+            shaders.water:send("time", lastGameTime)
+            shaders.water:send("depth", player.depth / 1000)
+        end
+        if shaders.swirl then
+            shaders.swirl:send("iTime", lastGameTime)
+            shaders.swirl:send("dayOfWeek", day)
+        end
+        if shaders.titleShader then
+            shaders.titleShader:send("love_Time", lastGameTime)
+        end
+        if shaders.background then
+            shaders.background:send("iTime", lastGameTime)
+        end
+        if shaders.fight then
+            shaders.fight:send("iTime", lastGameTime)
+        end
+        if shaders.crt then
+            shaders.crt:send("time", lastGameTime)
+        end
+        if shaders.lost then
+            shaders.lost:send("time", lastGameTime)
+        end
+        
+        updateButtons(dt)  -- Still update buttons so the pause menu is interactive
     end
-
-    if shaders.swirl then
-        shaders.swirl:send("time", gameTime)
-        shaders.swirl:send("")
-    end
-
-    -- Update bubbles
-    updateBubbles(dt)
     
-    -- Update buttons
-    updateButtons(dt)
-    
-    -- Consume oxygen when exploring
-    if currentState == GameState.EXPLORE or currentState == GameState.COMBAT then
-        consumeOxygen()
-    end
-    
-    -- Update enemy animation
-    if currentEnemy then
-        -- Add subtle animation movement
-        currentEnemy.animTime = (currentEnemy.animTime or 0) + dt
+    -- Store the last game time before pausing
+    if currentGameState ~= GameState.PAUSE then
+        lastGameTime = gameTime
     end
 end
-
 -- Mouse press handler
 function love.mousepressed(x, y, button)
     if button ~= 1 then return end
     
     local currentButtons = {}
-    if currentState == GameState.TITLE then
+    if currentGameState == GameState.TITLE then
         currentButtons = buttons.title
-    elseif currentState == GameState.EXPLORE then
+    elseif currentGameState == GameState.EXPLORE then
         currentButtons = buttons.explore
-    elseif currentState == GameState.COMBAT then
+    elseif currentGameState == GameState.COMBAT then
         currentButtons = buttons.combat
-    elseif currentState == GameState.SHOP then
+    elseif currentGameState == GameState.SHOP then
         currentButtons = buttons.shop
-    elseif currentState == GameState.INVENTORY then
+    elseif currentGameState == GameState.INVENTORY then
         currentButtons = buttons.inventory
-    elseif currentState == GameState.GAME_OVER then
+    elseif currentGameState == GameState.GAME_OVER then
         currentButtons = buttons.gameOver
     end
     
     -- Check button clicks
-    for _, button in ipairs(currentButtons) do
-        if x >= button.x and x <= button.x + button.width and
-           y >= button.y and y <= button.y + button.height then
-            button.action()
+    for _, btn in ipairs(currentButtons) do
+        if x >= btn.x and x <= btn.x + btn.width and
+           y >= btn.y and y <= btn.y + btn.height then
+            btn.pressed = true
+            btn.animating = true
+            btn.animTimer = 0
             return
         end
     end
     
     -- Shop item click
-    if currentState == GameState.SHOP then
+    if currentGameState == GameState.SHOP then
         local itemsPerRow = 3
         local itemWidth = 200
         local itemHeight = 120
-        local startX = (GAME_WIDTH - (itemWidth * itemsPerRow + 20 * (itemsPerRow - 1))) / 2
-        local startY = 150
+        local startX = (GAME_WIDTH - (itemWidth * itemsPerRow + 20 * (itemsPerRow - 1))) / 2 + 10 -- Match drawShop()
+        local startY = GAME_HEIGHT - 370 -- Match drawShop()
         
         for i, _ in ipairs(shopInventory) do
             local row = math.floor((i - 1) / itemsPerRow)
@@ -1366,14 +1950,13 @@ function love.mousepressed(x, y, button)
     end
     
     -- Inventory item click
-    if currentState == GameState.INVENTORY then
+    if currentGameState == GameState.INVENTORY then
         local itemsPerRow = 4
         local itemWidth = 150
         local itemHeight = 100
         local startX = (GAME_WIDTH - (itemWidth * itemsPerRow + 20 * (itemsPerRow - 1))) / 2
         local startY = 150
         
-        -- Check inventory item clicks
         for i, _ in ipairs(player.inventory) do
             local row = math.floor((i - 1) / itemsPerRow)
             local col = (i - 1) % itemsPerRow
@@ -1388,7 +1971,6 @@ function love.mousepressed(x, y, button)
             end
         end
         
-        -- Check use button click
         if selectedInventoryItem and player.inventory[selectedInventoryItem] then
             local buttonX = GAME_WIDTH / 2 - 75
             local buttonY = GAME_HEIGHT - 120
@@ -1405,52 +1987,129 @@ function love.mousepressed(x, y, button)
     end
 end
 
--- Main draw function
-function love.draw()
-    -- Apply water shader
-    if shaders.water then
-        love.graphics.setShader(shaders.water)
+function love.mousereleased(x, y, button)
+    if button ~= 1 then return end
+    
+    local currentButtons = {}
+    if currentGameState == GameState.TITLE then
+        currentButtons = buttons.title
+    elseif currentGameState == GameState.EXPLORE then
+        currentButtons = buttons.explore
+    elseif currentGameState == GameState.COMBAT then
+        currentButtons = buttons.combat
+    elseif currentGameState == GameState.SHOP then
+        currentButtons = buttons.shop
+    elseif currentGameState == GameState.INVENTORY then
+        currentButtons = buttons.inventory
+    elseif currentGameState == GameState.GAME_OVER then
+        currentButtons = buttons.gameOver
+    elseif currentGameState == GameState.PAUSE then
+        currentButtons = buttons.pause 
     end
     
-    -- Background color based on depth
-    local depthFactor = math.max(0.1, 1 - player.depth / 300)
-    love.graphics.setColor(0.1 * depthFactor, 0.2 * depthFactor, 0.5 * depthFactor)
+    for _, btn in ipairs(currentButtons) do
+        if btn.pressed and x >= btn.x and x <= btn.x + btn.width and
+           y >= btn.y and y <= btn.y + btn.height then
+            btn.pressed = false
+            btn.animating = false
+            btn.action()
+        else
+            btn.pressed = false
+            btn.animating = false
+        end
+    end
+end
+
+function love.keypressed(key)
+    if key == "escape" and currentGameState == GameState.COMBAT then
+        currentGameState = GameState.PAUSE
+    elseif key == "escape" and currentGameState == GameState.PAUSE then
+        currentGameState = GameState.COMBAT  -- Allow Escape to unpause too
+    end
+
+    if key == "r" and currentGameState == GameState.COMBAT then
+        runFromCombat()
+    end
+end
+
+function drawPause()
+    -- Draw a semi-transparent overlay
+    love.graphics.setColor(0, 0, 0, 0.7)
     love.graphics.rectangle("fill", 0, 0, GAME_WIDTH, GAME_HEIGHT)
     
-    -- Draw bubbles
-    drawBubbles()
+    -- Draw pause text
+    love.graphics.setFont(fonts.large)
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.printf("Paused", 0, GAME_HEIGHT / 2 - 75, GAME_WIDTH, "center")
     
-    -- Reset shader
-    love.graphics.setShader()
-    
-    -- Draw state-specific elements
-    if currentState == GameState.TITLE then
+    love.graphics.setColor(1, 1, 1, 1)
+end
+
+function love.draw()
+    love.graphics.setCanvas(canvas)
+    love.graphics.clear()
+
+    if currentGameState == GameState.TITLE then
+        love.graphics.setShader(shaders.background)
+        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.rectangle("fill", 0, 0, GAME_WIDTH, GAME_HEIGHT)
+        love.graphics.setShader()
         drawTitle()
-    elseif currentState == GameState.EXPLORE then
-        -- Draw exploration interface
+    elseif currentGameState == GameState.EXPLORE then
+        love.graphics.setShader(shaders.fight)
+        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.rectangle("fill", 0, 0, GAME_WIDTH, GAME_HEIGHT)
+        love.graphics.setShader()
         love.graphics.setFont(fonts.large)
         love.graphics.setColor(1, 1, 1, 0.8)
         love.graphics.printf("Depth: " .. player.depth .. "m", 0, 50, GAME_WIDTH, "center")
         drawPlayerStats()
-        drawCombatLog()
-    elseif currentState == GameState.COMBAT then
-        -- Draw combat interface
+    elseif currentGameState == GameState.COMBAT then
+        love.graphics.setShader(shaders.fight)
+        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.rectangle("fill", 0, 0, GAME_WIDTH, GAME_HEIGHT)
+        love.graphics.setShader()
         drawEnemy()
         drawPlayerStats()
         drawCombatLog()
-    elseif currentState == GameState.SHOP then
-        -- Draw shop interface
+    elseif currentGameState == GameState.SHOP then
+        love.graphics.setShader(shaders.swirl)
+        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.rectangle("fill", 0, 0, GAME_WIDTH, GAME_HEIGHT)
+        love.graphics.setShader()
         drawShop()
         drawPlayerStats()
-    elseif currentState == GameState.INVENTORY then
-        -- Draw inventory interface
+    elseif currentGameState == GameState.INVENTORY then
+        love.graphics.setShader(shaders.swirl)
+        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.rectangle("fill", 0, 0, GAME_WIDTH, GAME_HEIGHT)
+        love.graphics.setShader()
         drawInventory()
         drawPlayerStats()
-    elseif currentState == GameState.GAME_OVER then
-        -- Draw game over screen
+    elseif currentGameState == GameState.GAME_OVER then
+        love.graphics.setShader(shaders.lost)
+        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.rectangle("fill", 0, 0, GAME_WIDTH, GAME_HEIGHT)
+        love.graphics.setShader()
         drawGameOver()
+    elseif currentGameState == GameState.PAUSE then
+        -- Draw the combat scene frozen
+        love.graphics.setShader(shaders.fight)
+        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.rectangle("fill", 0, 0, GAME_WIDTH, GAME_HEIGHT)
+        love.graphics.setShader()
+        drawEnemy()
+        drawPlayerStats()
+        drawCombatLog()
+        drawButtons()
+        drawPause()
     end
-    
-    -- Draw buttons
+
     drawButtons()
+
+    love.graphics.setCanvas()
+    love.graphics.setShader(shaders.crt)
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.draw(canvas, 0, 0)
+    love.graphics.setShader()
 end
